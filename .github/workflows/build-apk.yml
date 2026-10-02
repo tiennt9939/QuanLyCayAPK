@@ -55,4 +55,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: QuanLyCayAPK-debug
-          path: build_source/QuanLyCayAPK_project/app/build/outputs/apk/debug/app-debug.apk
+          path: build_source/app/build/outputs/apk/debug/app-debug.apk
