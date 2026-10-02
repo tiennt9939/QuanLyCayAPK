@@ -1,0 +1,54 @@
+name: Build QuanLyCayAPK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Extract project ZIP
+        run: |
+          rm -rf build_source
+          mkdir build_source
+          unzip -q QuanLyCayAPK_project.zip -d build_source
+
+      - name: Find project folder
+        run: |
+          find build_source -maxdepth 2 -type f -name "settings.gradle.kts" -print
+
+      - name: Build APK
+        working-directory: build_source/QuanLyCayAPK_project
+        run: |
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyCayAPK-debug
+          path: build_source/QuanLyCayAPK_project/app/build/outputs/apk/debug/app-debug.apk
