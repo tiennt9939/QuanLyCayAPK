@@ -47,7 +47,7 @@ jobs:
           find build_source -maxdepth 2 -type f -name "settings.gradle.kts" -print
 
       - name: Build APK
-        working-directory: build_source/QuanLyCayAPK_project.zip
+        working-directory: build_source/QuanLyCayAPK_project
         run: |
           gradle assembleDebug --stacktrace
 
