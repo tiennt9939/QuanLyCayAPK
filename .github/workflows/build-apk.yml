@@ -26,8 +26,8 @@ jobs:
           accept-android-sdk-licenses: false
   
       - name: Install Android SDK packages
-         run: |
-           yes | sdkmanager --licenses >/dev/null
+        run: |
+          yes | sdkmanager --licenses
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Setup Gradle
