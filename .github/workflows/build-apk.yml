@@ -35,38 +35,104 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Find Android project
+      - name: Locate Android project
         shell: bash
         run: |
-          PROJECT_DIR=$(find . -type f -name "settings.gradle.kts" -print -quit | xargs -r dirname)
+          set -e
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "KHÔNG TÌM THẤY Android project"
-            echo "Các file settings.gradle tìm được:"
-            find . -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
+          echo "=== TIM ANDROID PROJECT TRUC TIEP ==="
+
+          PROJECT_DIR=$(find . \
+            -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -not -path "./.git/*" \
+            -print -quit | xargs -r dirname)
+
+          if [ -n "$PROJECT_DIR" ]; then
+            echo "Da tim thay Android project:"
+            echo "$PROJECT_DIR"
+            echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "Khong tim thay project truc tiep."
+          echo "=== TIM FILE ZIP ==="
+
+          ZIP_FILE=$(find . \
+            -type f \
+            -name "*.zip" \
+            -not -path "./.git/*" \
+            -print -quit)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "KHONG TIM THAY FILE ZIP"
+            echo "=== CAC FILE TRONG REPOSITORY ==="
+            find . -maxdepth 5 -type f | sort | head -300
             exit 1
           fi
 
-          echo "Đã tìm thấy Android project tại: $PROJECT_DIR"
+          echo "Tim thay ZIP:"
+          echo "$ZIP_FILE"
+
+          rm -rf build_source
+          mkdir -p build_source
+
+          unzip -q "$ZIP_FILE" -d build_source
+
+          echo "=== TIM PROJECT TRONG ZIP ==="
+
+          PROJECT_DIR=$(find build_source \
+            -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -print -quit | xargs -r dirname)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ZIP CO TON TAI NHUNG KHONG CO ANDROID PROJECT"
+            echo "=== CAC FILE SETTINGS ==="
+            find build_source -type f \
+              \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+              -print
+
+            echo "=== CAC FILE DA GIAI NEN ==="
+            find build_source -maxdepth 6 -type f | sort | head -300
+            exit 1
+          fi
+
+          echo "Da tim thay Android project trong ZIP:"
+          echo "$PROJECT_DIR"
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Build APK
         shell: bash
         run: |
+          set -e
+
+          echo "Build project:"
+          echo "$PROJECT_DIR"
+
           cd "$PROJECT_DIR"
+
           gradle assembleDebug --stacktrace
 
       - name: Find APK
         shell: bash
         run: |
-          APK=$(find "$PROJECT_DIR" -type f -path "*/app/build/outputs/apk/debug/*.apk" -print -quit)
+          set -e
+
+          APK=$(find "$PROJECT_DIR" \
+            -type f \
+            -path "*/app/build/outputs/apk/debug/*.apk" \
+            -print -quit)
 
           if [ -z "$APK" ]; then
-            echo "KHÔNG TÌM THẤY APK"
+            echo "KHONG TIM THAY APK"
             exit 1
           fi
 
-          echo "Đã tìm thấy APK: $APK"
+          echo "Da tim thay APK:"
+          echo "$APK"
+
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
