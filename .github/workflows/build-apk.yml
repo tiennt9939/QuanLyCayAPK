@@ -1,1 +1,113 @@
+name: Build QuanLyCayAPK
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Locate and extract Android project
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf build_source
+          mkdir -p build_source
+
+          echo "=== KIEM TRA REPOSITORY ==="
+          find . -maxdepth 3 -type f | sort | sed -n '1,200p'
+
+          PROJECT_DIR=""
+
+          if [ -f "settings.gradle.kts" ]; then
+            PROJECT_DIR="$GITHUB_WORKSPACE"
+          fi
+
+          if [ -z "$PROJECT_DIR" ] && [ -f "QuanLyCayAPK_project.zip" ]; then
+            echo "Tim thay QuanLyCayAPK_project.zip"
+            unzip -q "QuanLyCayAPK_project.zip" -d build_source
+          fi
+
+          if [ -z "$PROJECT_DIR" ] && \
+             [ -z "$(find build_source -type f -name settings.gradle.kts -print -quit)" ]; then
+
+            OUTER_ZIP="$(find . -maxdepth 2 -type f -name '*.zip' -print -quit)"
+
+            if [ -n "$OUTER_ZIP" ]; then
+              echo "Tim thay ZIP bao ngoai: $OUTER_ZIP"
+              unzip -q "$OUTER_ZIP" -d build_source
+            fi
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            PROJECT_DIR="$(find build_source -type f \
+              -name settings.gradle.kts -print -quit | xargs -r dirname)"
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            NESTED_ZIP="$(find build_source -type f \
+              -name 'QuanLyCayAPK_project.zip' -print -quit)"
+
+            if [ -n "$NESTED_ZIP" ]; then
+              echo "Tim thay ZIP project long nhau: $NESTED_ZIP"
+
+              mkdir -p build_source/project
+
+              unzip -q "$NESTED_ZIP" -d build_source/project
+
+              PROJECT_DIR="$(find build_source/project -type f \
+                -name settings.gradle.kts -print -quit | xargs -r dirname)"
+            fi
+          fi
+
+          echo "=== KIEM TRA PROJECT ==="
+
+          find build_source -type f \
+            -name settings.gradle.kts -print || true
+
+          test -n "$PROJECT_DIR"
+          test -f "$PROJECT_DIR/settings.gradle.kts"
+          test -f "$PROJECT_DIR/app/build.gradle.kts"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "ANDROID PROJECT: $PROJECT_DIR"
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyCayAPK-debug
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
