@@ -40,30 +40,84 @@ jobs:
         run: |
           set -e
 
-          echo "=== TIM FILE ZIP ==="
-          ls -lh QuanLyCayAPK_project.zip
-
           rm -rf build_source
           mkdir -p build_source
 
-          echo "=== GIAI NEN PROJECT ==="
+          echo "================================"
+          echo "TIM ZIP TRONG REPOSITORY"
+          echo "================================"
+          find . -maxdepth 3 -type f -name "*.zip" -print
+
+          echo "================================"
+          echo "GIAI NEN ZIP DAU TIEN"
+          echo "================================"
+
           unzip -q -o QuanLyCayAPK_project.zip -d build_source
 
-          echo "=== TIM ANDROID PROJECT ==="
-          PROJECT_DIR="$(find build_source -type f \
-            -name settings.gradle.kts \
-            -print -quit | xargs -r dirname)"
+          PROJECT_DIR=""
 
-          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "================================"
+          echo "TIM ANDROID PROJECT"
+          echo "================================"
 
-          test -n "$PROJECT_DIR"
+          for ROUND in 1 2 3 4; do
+
+            PROJECT_DIR="$(find build_source \
+              -type f \
+              -name "settings.gradle.kts" \
+              -print -quit | xargs -r dirname)"
+
+            if [ -n "$PROJECT_DIR" ]; then
+              echo "DA TIM THAY ANDROID PROJECT:"
+              echo "$PROJECT_DIR"
+              break
+            fi
+
+            echo "Chua tim thay project - lan $ROUND"
+
+            NESTED_ZIP="$(find build_source \
+              -type f \
+              -name "*.zip" \
+              -print -quit)"
+
+            if [ -z "$NESTED_ZIP" ]; then
+              echo "Khong con ZIP nao de giai nen."
+              break
+            fi
+
+            echo "Tim thay ZIP long nhau:"
+            echo "$NESTED_ZIP"
+
+            NEXT_DIR="build_source/nested_$ROUND"
+            mkdir -p "$NEXT_DIR"
+
+            unzip -q -o "$NESTED_ZIP" -d "$NEXT_DIR"
+
+          done
+
+          echo "================================"
+          echo "KIEM TRA KET QUA"
+          echo "================================"
+
+          find build_source -type f \
+            -name "settings.gradle.kts" -print
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "KHONG TIM THAY ANDROID PROJECT"
+            echo "Danh sach file:"
+            find build_source -maxdepth 6 -type f | sort
+            exit 1
+          fi
+
           test -f "$PROJECT_DIR/settings.gradle.kts"
           test -f "$PROJECT_DIR/app/build.gradle.kts"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "=== ANDROID PROJECT DA DUOC TIM THAY ==="
-          find "$PROJECT_DIR" -maxdepth 2 -type f | sort
+          echo "================================"
+          echo "ANDROID PROJECT DA SAN SANG"
+          echo "$PROJECT_DIR"
+          echo "================================"
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
