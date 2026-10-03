@@ -35,64 +35,26 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Locate and extract Android project
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
 
+          echo "=== TIM FILE ZIP ==="
+          ls -lh QuanLyCayAPK_project.zip
+
           rm -rf build_source
           mkdir -p build_source
 
-          echo "=== KIEM TRA REPOSITORY ==="
-          find . -maxdepth 3 -type f | sort | sed -n '1,200p'
+          echo "=== GIAI NEN PROJECT ==="
+          unzip -q -o QuanLyCayAPK_project.zip -d build_source
 
-          PROJECT_DIR=""
+          echo "=== TIM ANDROID PROJECT ==="
+          PROJECT_DIR="$(find build_source -type f \
+            -name settings.gradle.kts \
+            -print -quit | xargs -r dirname)"
 
-          if [ -f "settings.gradle.kts" ]; then
-            PROJECT_DIR="$GITHUB_WORKSPACE"
-          fi
-
-          if [ -z "$PROJECT_DIR" ] && [ -f "QuanLyCayAPK_project.zip" ]; then
-            echo "Tim thay QuanLyCayAPK_project.zip"
-            unzip -q "QuanLyCayAPK_project.zip" -d build_source
-          fi
-
-          if [ -z "$PROJECT_DIR" ] && \
-             [ -z "$(find build_source -type f -name settings.gradle.kts -print -quit)" ]; then
-
-            OUTER_ZIP="$(find . -maxdepth 2 -type f -name '*.zip' -print -quit)"
-
-            if [ -n "$OUTER_ZIP" ]; then
-              echo "Tim thay ZIP bao ngoai: $OUTER_ZIP"
-              unzip -q "$OUTER_ZIP" -d build_source
-            fi
-          fi
-
-          if [ -z "$PROJECT_DIR" ]; then
-            PROJECT_DIR="$(find build_source -type f \
-              -name settings.gradle.kts -print -quit | xargs -r dirname)"
-          fi
-
-          if [ -z "$PROJECT_DIR" ]; then
-            NESTED_ZIP="$(find build_source -type f \
-              -name 'QuanLyCayAPK_project.zip' -print -quit)"
-
-            if [ -n "$NESTED_ZIP" ]; then
-              echo "Tim thay ZIP project long nhau: $NESTED_ZIP"
-
-              mkdir -p build_source/project
-
-              unzip -q "$NESTED_ZIP" -d build_source/project
-
-              PROJECT_DIR="$(find build_source/project -type f \
-                -name settings.gradle.kts -print -quit | xargs -r dirname)"
-            fi
-          fi
-
-          echo "=== KIEM TRA PROJECT ==="
-
-          find build_source -type f \
-            -name settings.gradle.kts -print || true
+          echo "PROJECT_DIR=$PROJECT_DIR"
 
           test -n "$PROJECT_DIR"
           test -f "$PROJECT_DIR/settings.gradle.kts"
@@ -100,7 +62,8 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "ANDROID PROJECT: $PROJECT_DIR"
+          echo "=== ANDROID PROJECT DA DUOC TIM THAY ==="
+          find "$PROJECT_DIR" -maxdepth 2 -type f | sort
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
