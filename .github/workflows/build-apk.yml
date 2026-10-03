@@ -22,8 +22,6 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools'
 
       - name: Install Android SDK packages
         run: |
@@ -32,55 +30,45 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
 
-      - name: Extract project ZIP
-        run: |
-          rm -rf build_source
-          mkdir -p build_source
-          unzip -q QuanLyCayAPK_project.zip -d build_source
-
-      - name: Find project folder
-        id: find_project
+      - name: Find Android project
         shell: bash
         run: |
-          PROJECT_DIR=$(find build_source -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print -quit | xargs -r dirname)
+          PROJECT_DIR=$(find . -type f -name "settings.gradle.kts" -print -quit | xargs -r dirname)
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "Khong tim thay thu muc Android project"
+            echo "KHÔNG TÌM THẤY Android project"
+            echo "Các file settings.gradle tìm được:"
+            find . -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR"
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Đã tìm thấy Android project tại: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Build APK
         shell: bash
         run: |
-          cd "${{ steps.find_project.outputs.project_dir }}"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
-          else
-            gradle assembleDebug --stacktrace
-          fi
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --stacktrace
 
       - name: Find APK
-        id: find_apk
         shell: bash
         run: |
-          APK=$(find "${{ steps.find_project.outputs.project_dir }}" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)
+          APK=$(find "$PROJECT_DIR" -type f -path "*/app/build/outputs/apk/debug/*.apk" -print -quit)
 
           if [ -z "$APK" ]; then
-            echo "Khong tim thay APK"
+            echo "KHÔNG TÌM THẤY APK"
             exit 1
           fi
 
-          echo "APK=$APK"
-          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Đã tìm thấy APK: $APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: QuanLyCayAPK-debug
-          path: ${{ steps.find_apk.outputs.apk_path }}
+          path: ${{ env.APK_PATH }}
