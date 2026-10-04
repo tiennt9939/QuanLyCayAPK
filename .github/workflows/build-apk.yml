@@ -9,7 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,86 +37,61 @@ jobs:
       - name: Extract Android project
         shell: bash
         run: |
-          set -e
-
+          set -euo pipefail
           rm -rf build_source
           mkdir -p build_source
 
-          echo "================================"
-          echo "TIM ZIP TRONG REPOSITORY"
-          echo "================================"
-          find . -maxdepth 3 -type f -name "*.zip" -print
+          echo "=== KIEM TRA REPOSITORY ==="
+          find . -maxdepth 3 -type f | sort | sed -n '1,200p'
 
-          echo "================================"
-          echo "GIAI NEN ZIP DAU TIEN"
-          echo "================================"
+          # Neu source Android da nam truc tiep trong repository.
+          if [ -f "settings.gradle.kts" ]; then
+            echo "PROJECT_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+            exit 0
+          fi
 
-          unzip -q -o QuanLyCayAPK_project.zip -d build_source
-
-          PROJECT_DIR=""
-
-          echo "================================"
-          echo "TIM ANDROID PROJECT"
-          echo "================================"
-
-          for ROUND in 1 2 3 4; do
-
-            PROJECT_DIR="$(find build_source \
-              -type f \
-              -name "settings.gradle.kts" \
-              -print -quit | xargs -r dirname)"
-
-            if [ -n "$PROJECT_DIR" ]; then
-              echo "DA TIM THAY ANDROID PROJECT:"
-              echo "$PROJECT_DIR"
-              break
-            fi
-
-            echo "Chua tim thay project - lan $ROUND"
-
-            NESTED_ZIP="$(find build_source \
-              -type f \
-              -name "*.zip" \
-              -print -quit)"
-
-            if [ -z "$NESTED_ZIP" ]; then
-              echo "Khong con ZIP nao de giai nen."
-              break
-            fi
-
-            echo "Tim thay ZIP long nhau:"
-            echo "$NESTED_ZIP"
-
-            NEXT_DIR="build_source/nested_$ROUND"
-            mkdir -p "$NEXT_DIR"
-
-            unzip -q -o "$NESTED_ZIP" -d "$NEXT_DIR"
-
-          done
-
-          echo "================================"
-          echo "KIEM TRA KET QUA"
-          echo "================================"
-
-          find build_source -type f \
-            -name "settings.gradle.kts" -print
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "KHONG TIM THAY ANDROID PROJECT"
-            echo "Danh sach file:"
-            find build_source -maxdepth 6 -type f | sort
+          # Giai nen tat ca ZIP trong repository theo tung lop.
+          # Ho tro ca QuanLyCayAPK_project.zip va goi bao ngoai co ten bat ky.
+          shopt -s nullglob
+          zip_list=(./*.zip)
+          if [ ${#zip_list[@]} -eq 0 ]; then
+            echo "Khong tim thay file ZIP o thu muc goc repository."
             exit 1
           fi
 
-          test -f "$PROJECT_DIR/settings.gradle.kts"
-          test -f "$PROJECT_DIR/app/build.gradle.kts"
+          for z in "${zip_list[@]}"; do
+            echo "Giai nen ZIP: $z"
+            unzip -o -q "$z" -d build_source
+          done
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          # Lap toi da 5 lop ZIP long nhau, dung ngay khi tim thay settings.gradle.kts.
+          for round in 1 2 3 4 5; do
+            PROJECT_DIR="$(find build_source -type f -name settings.gradle.kts -print -quit | xargs -r dirname || true)"
+            if [ -n "$PROJECT_DIR" ]; then
+              echo "Tim thay Android project: $PROJECT_DIR"
+              test -f "$PROJECT_DIR/app/build.gradle.kts"
+              echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+              exit 0
+            fi
 
-          echo "================================"
-          echo "ANDROID PROJECT DA SAN SANG"
-          echo "$PROJECT_DIR"
-          echo "================================"
+            mapfile -t nested_zips < <(find build_source -type f -name '*.zip' -print)
+            if [ ${#nested_zips[@]} -eq 0 ]; then
+              break
+            fi
+
+            echo "=== GIAI NEN LOP ZIP $round ==="
+            for z in "${nested_zips[@]}"; do
+              dest="${z%.zip}_extracted"
+              mkdir -p "$dest"
+              echo "Giai nen: $z -> $dest"
+              unzip -o -q "$z" -d "$dest"
+              rm -f "$z"
+            done
+          done
+
+          echo "=== KHONG TIM THAY ANDROID PROJECT ==="
+          find build_source -type f | sort | sed -n '1,300p'
+          exit 1
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_DIR }}
