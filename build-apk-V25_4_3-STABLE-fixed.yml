@@ -1,0 +1,90 @@
+name: Build QuanLyCayAPK V25.4.3 STABLE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Extract ONLY V25.4.3 STABLE
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build_source
+          mkdir -p build_source
+
+          ZIP="ROLL_CAY_CANH_V25_4_3_STABLE.zip"
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::Khong tim thay $ZIP trong thu muc goc repository."
+            exit 1
+          fi
+
+          unzip -q "$ZIP" -d build_source
+
+          PROJECT_DIR="$(find build_source -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::Khong tim thay Android project trong ZIP STABLE."
+            exit 1
+          fi
+
+          test -f "$PROJECT_DIR/app/build.gradle.kts"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Pre-build source checks
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/com/quanlycay/apk/MainActivity.java
+
+          # Chặn annotation trùng liên tiếp.
+          if grep -Rqn -A1 '@JavascriptInterface' app/src/main/java | grep -q '@JavascriptInterface'; then
+            echo "::error::Phat hien @JavascriptInterface bi lap lien tiep."
+            exit 1
+          fi
+
+          test -f app/src/main/assets/quote-background.png ||             echo "::warning::Khong co quote-background.png trong source."
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Verify APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyCayAPK-V25.4.3-STABLE
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
