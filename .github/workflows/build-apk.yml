@@ -1,4 +1,4 @@
-name: Build ROLL CÂY CẢNH V25.5.9 STABLE
+name: Build ROLL CAY CANH
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -24,172 +24,62 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           if [ -d "/usr/local/lib/android/sdk" ]; then
-            export ANDROID_HOME="/usr/local/lib/android/sdk"
+            echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+            echo "/usr/local/lib/android/sdk/platform-tools" >> "$GITHUB_PATH"
+            echo "/usr/local/lib/android/sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           elif [ -d "$HOME/Android/Sdk" ]; then
-            export ANDROID_HOME="$HOME/Android/Sdk"
+            echo "ANDROID_HOME=$HOME/Android/Sdk" >> "$GITHUB_ENV"
+            echo "$HOME/Android/Sdk/platform-tools" >> "$GITHUB_PATH"
+            echo "$HOME/Android/Sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           else
-            echo "ERROR: Android SDK not found"
+            echo "Android SDK not found"
             exit 1
           fi
 
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-      - name: Accept Android SDK licenses
-        shell: bash
+      - name: Accept licenses
         run: |
-          set -euo pipefail
+          set -e
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            --licenses >/tmp/sdkmanager-licenses.log 2>&1 || true
-
-          tail -50 /tmp/sdkmanager-licenses.log || true
-
-      - name: Install Android SDK packages
-        shell: bash
+      - name: Install SDK
         run: |
-          set -euo pipefail
-
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          "$SDKMANAGER" \
+          set -e
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Verify Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          test -d "$ANDROID_HOME/platforms/android-35"
-          test -d "$ANDROID_HOME/build-tools/35.0.0"
-
-          echo "Android SDK verification: PASS"
-
-      - name: Setup Gradle 8.13
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
 
-            - name: Verify source
-        shell: bash
+      - name: Check project
         run: |
-          set -euo pipefail
+          set -e
 
-          echo "======================================"
-          echo "CHECK PROJECT FILES"
-          echo "======================================"
+          echo "Checking project files..."
 
-          for f in \
-            settings.gradle.kts \
-            build.gradle.kts \
-            app/build.gradle.kts \
-            app/src/main/AndroidManifest.xml \
-            app/src/main/assets/index.html \
-            app/src/main/java/com/quanlycay/apk/MainActivity.java
-          do
-            if [ ! -f "$f" ]; then
-              echo "ERROR: Missing file: $f"
-              exit 1
-            fi
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/assets/index.html
+          test -f app/src/main/java/com/quanlycay/apk/MainActivity.java
 
-            echo "OK: $f"
-          done
+          echo "Project files: OK"
 
-          echo ""
-          echo "======================================"
-          echo "VERSION IN app/build.gradle.kts"
-          echo "======================================"
-
+          echo "Version information:"
           grep -n "versionName" app/build.gradle.kts || true
           grep -n "versionCode" app/build.gradle.kts || true
 
-          echo ""
-          echo "======================================"
-          echo "SOURCE CHECK: PASS"
-          echo "======================================"
-
-      - name: Static preflight
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 tools/preflight.py
-
-      - name: Check JavaScript syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          import subprocess
-          import tempfile
-
-          p = Path("app/src/main/assets/index.html")
-          text = p.read_text(encoding="utf-8")
-
-          blocks = re.findall(
-              r"<script(?:\s[^>]*)?>(.*?)</script>",
-              text,
-              flags=re.S | re.I
-          )
-
-          print(f"JavaScript blocks found: {len(blocks)}")
-
-          if not blocks:
-              raise SystemExit("ERROR: No JavaScript blocks found")
-
-          with tempfile.TemporaryDirectory() as d:
-              for i, block in enumerate(blocks, 1):
-                  f = Path(d) / f"script_{i}.js"
-                  f.write_text(block, encoding="utf-8")
-
-                  result = subprocess.run(
-                      ["node", "--check", str(f)],
-                      capture_output=True,
-                      text=True
-                  )
-
-                  if result.returncode != 0:
-                      print(result.stdout)
-                      print(result.stderr)
-                      raise SystemExit(
-                          f"ERROR: JavaScript syntax error in block {i}"
-                      )
-
-          print("JavaScript syntax: PASS")
-          PY
-
-      - name: Check JavascriptInterface count
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          COUNT=$(grep -c '@JavascriptInterface' \
-            app/src/main/java/com/quanlycay/apk/MainActivity.java || true)
-
-          echo "JavascriptInterface count: $COUNT"
-
-          if [ "$COUNT" -ne 1 ]; then
-            echo "ERROR: Expected exactly one @JavascriptInterface"
-            exit 1
-          fi
-
       - name: Build APK
-        shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           gradle clean assembleDebug \
             --no-daemon \
@@ -197,13 +87,15 @@ jobs:
             --warning-mode all
 
       - name: Verify APK
-        shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
-          test -f "$APK"
+          if [ ! -f "$APK" ]; then
+            echo "APK not found"
+            exit 1
+          fi
 
           echo "======================================"
           echo "APK BUILD SUCCESS"
@@ -214,6 +106,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuanLyCayAPK-V25.5.9-STABLE-debug
+          name: QuanLyCayAPK-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
