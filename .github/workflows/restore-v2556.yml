@@ -1,0 +1,118 @@
+name: Restore V25.5.6 Source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find V25.5.6 ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="$(find . -maxdepth 1 -type f -iname 'V2556*.zip' -print -quit)"
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Không tìm thấy file ZIP V2556 ở thư mục gốc."
+            echo "Các file hiện có:"
+            find . -maxdepth 1 -type f -printf '%f\n'
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Extract V25.5.6 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf /tmp/v2556_source
+          mkdir -p /tmp/v2556_source
+
+          unzip -q "$ZIP" -d /tmp/v2556_source
+
+          echo "Extracted structure:"
+          find /tmp/v2556_source -maxdepth 3 -type f | head -100
+
+      - name: Locate project root
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT=""
+
+          if [ -f "/tmp/v2556_source/settings.gradle.kts" ] && \
+             [ -f "/tmp/v2556_source/build.gradle.kts" ]; then
+            ROOT="/tmp/v2556_source"
+          else
+            ROOT="$(find /tmp/v2556_source -type f -name settings.gradle.kts -print -quit | xargs -r dirname)"
+          fi
+
+          if [ -z "$ROOT" ] || \
+             [ ! -f "$ROOT/settings.gradle.kts" ] || \
+             [ ! -f "$ROOT/build.gradle.kts" ]; then
+            echo "ERROR: Không tìm thấy Android project root hợp lệ."
+            exit 1
+          fi
+
+          echo "Project root: $ROOT"
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Restore source into repository root
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='V2556*.zip' \
+            "$PROJECT_ROOT/" ./
+
+          rm -f V2556*.zip
+
+          echo "Repository root after restore:"
+          ls -la
+
+      - name: Verify V25.5.6 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f .github/workflows/build-apk.yml
+
+          grep -q '25.5.6' app/build.gradle.kts
+
+          echo "================================"
+          echo "V25.5.6 SOURCE RESTORE PASS"
+          echo "================================"
+
+      - name: Commit restored source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Restore V25.5.6 stable source"
+          git push
