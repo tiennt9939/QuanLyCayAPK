@@ -24,19 +24,68 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -d "/usr/local/lib/android/sdk" ]; then
+            export ANDROID_HOME="/usr/local/lib/android/sdk"
+          elif [ -d "$HOME/Android/Sdk" ]; then
+            export ANDROID_HOME="$HOME/Android/Sdk"
+          else
+            echo "ERROR: Android SDK not found"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+
+          echo "Android SDK:"
+          ls -la "$ANDROID_HOME"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses \
+            >/tmp/sdkmanager-licenses.log 2>&1 || true
+
+          tail -50 /tmp/sdkmanager-licenses.log || true
 
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
 
-          yes | sdkmanager --licenses >/dev/null || true
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
-          sdkmanager \
+          "$SDKMANAGER" --update || true
+
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list \
+            | grep -E 'platform-tools|platforms;android-35|build-tools;35.0.0' \
+            | head -20 || true
+
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+
+          echo "Android SDK verification: PASS"
 
       - name: Setup Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
@@ -47,8 +96,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "Checking Android project..."
 
           test -f settings.gradle.kts
           test -f build.gradle.kts
@@ -71,7 +118,8 @@ jobs:
           if [ -f tools/preflight.py ]; then
             python3 tools/preflight.py
           else
-            echo "WARNING: tools/preflight.py not found"
+            echo "ERROR: tools/preflight.py not found"
+            exit 1
           fi
 
       - name: Check JavaScript syntax
@@ -91,7 +139,7 @@ jobs:
           text = p.read_text(encoding="utf-8")
 
           blocks = re.findall(
-              r"<script(?:\\s[^>]*)?>(.*?)</script>",
+              r"<script(?:\s[^>]*)?>(.*?)</script>",
               text,
               flags=re.S | re.I
           )
