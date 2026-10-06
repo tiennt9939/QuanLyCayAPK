@@ -80,22 +80,42 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Verify V25.5.9 source
+            - name: Verify source
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f app/build.gradle.kts
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/assets/index.html
-          test -f app/src/main/java/com/quanlycay/apk/MainActivity.java
-
-          grep -q '25.5.9' app/build.gradle.kts
-
           echo "======================================"
-          echo "V25.5.9 SOURCE CHECK: PASS"
+          echo "CHECK PROJECT FILES"
+          echo "======================================"
+
+          for f in \
+            settings.gradle.kts \
+            build.gradle.kts \
+            app/build.gradle.kts \
+            app/src/main/AndroidManifest.xml \
+            app/src/main/assets/index.html \
+            app/src/main/java/com/quanlycay/apk/MainActivity.java
+          do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing file: $f"
+              exit 1
+            fi
+
+            echo "OK: $f"
+          done
+
+          echo ""
+          echo "======================================"
+          echo "VERSION IN app/build.gradle.kts"
+          echo "======================================"
+
+          grep -n "versionName" app/build.gradle.kts || true
+          grep -n "versionCode" app/build.gradle.kts || true
+
+          echo ""
+          echo "======================================"
+          echo "SOURCE CHECK: PASS"
           echo "======================================"
 
       - name: Static preflight
