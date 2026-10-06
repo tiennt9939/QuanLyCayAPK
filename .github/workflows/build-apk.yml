@@ -1,4 +1,4 @@
-name: Build ROLL CÂY CẢNH V25.5.6 STABLE
+name: Build ROLL CÂY CẢNH V25.5.9 STABLE
 
 on:
   workflow_dispatch:
@@ -42,18 +42,14 @@ jobs:
 
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
-
-          echo "Android SDK:"
-          ls -la "$ANDROID_HOME"
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -euo pipefail
 
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses \
-            >/tmp/sdkmanager-licenses.log 2>&1 || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --licenses >/tmp/sdkmanager-licenses.log 2>&1 || true
 
           tail -50 /tmp/sdkmanager-licenses.log || true
 
@@ -63,8 +59,6 @@ jobs:
           set -euo pipefail
 
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          "$SDKMANAGER" --update || true
 
           "$SDKMANAGER" \
             "platform-tools" \
@@ -76,12 +70,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "ANDROID_HOME=$ANDROID_HOME"
-
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list \
-            | grep -E 'platform-tools|platforms;android-35|build-tools;35.0.0' \
-            | head -20 || true
-
           test -d "$ANDROID_HOME/platforms/android-35"
           test -d "$ANDROID_HOME/build-tools/35.0.0"
 
@@ -92,7 +80,7 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Verify V25.5.6 source
+      - name: Verify V25.5.9 source
         shell: bash
         run: |
           set -euo pipefail
@@ -104,10 +92,10 @@ jobs:
           test -f app/src/main/assets/index.html
           test -f app/src/main/java/com/quanlycay/apk/MainActivity.java
 
-          grep -q '25.5.6' app/build.gradle.kts
+          grep -q '25.5.9' app/build.gradle.kts
 
           echo "======================================"
-          echo "V25.5.6 SOURCE CHECK: PASS"
+          echo "V25.5.9 SOURCE CHECK: PASS"
           echo "======================================"
 
       - name: Static preflight
@@ -115,19 +103,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -f tools/preflight.py ]; then
-            python3 tools/preflight.py
-          else
-            echo "ERROR: tools/preflight.py not found"
-            exit 1
-          fi
+          python3 tools/preflight.py
 
       - name: Check JavaScript syntax
         shell: bash
         run: |
           set -euo pipefail
-
-          node --version
 
           python3 - <<'PY'
           from pathlib import Path
@@ -202,10 +183,7 @@ jobs:
 
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not created"
-            exit 1
-          fi
+          test -f "$APK"
 
           echo "======================================"
           echo "APK BUILD SUCCESS"
@@ -216,6 +194,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuanLyCayAPK-V25.5.6-debug
+          name: QuanLyCayAPK-V25.5.9-STABLE-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
