@@ -17,6 +17,7 @@ import android.webkit.WebViewClient;
 import android.print.PrintAttributes;
 import android.print.PrintManager;
 import android.print.PrintDocumentAdapter;
+import android.print.PageRange;
 import android.os.CancellationSignal;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
