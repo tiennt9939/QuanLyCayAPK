@@ -1,0 +1,381 @@
+}
+
+function setEntryMode(m){
+  entryMode=m==='in'?'in':'pack';
+  const packBtn=$('modePack'),inBtn=$('modeIn'),packForm=$('packForm'),inForm=$('inForm');
+  if(packBtn)packBtn.classList.toggle('active',entryMode==='pack');
+  if(inBtn)inBtn.classList.toggle('active',entryMode==='in');
+  if(packForm){packForm.classList.remove('hidden');packForm.style.display=entryMode==='pack'?'block':'none';}
+  if(inForm){inForm.classList.remove('hidden');inForm.style.display=entryMode==='in'?'block':'none';}
+  if(entryMode==='pack'){
+    if(!selected.plantName)selected.plantName=plantNames()[0]||'';
+    if(selected.empIndex>=employees().length)selected.empIndex=0;
+    syncPackSelection();
+  }else{
+    if(!selected.inPlantName)selected.inPlantName=plantNames()[0]||'';
+    syncInSelection();
+  }
+}
+function packerAcceptedKey(){
+  try{const uid=String(orderNotificationState.uid||CloudSync.state()?.user?.uid||'').trim();return uid?'ROLL_CAY_ACCEPTED_ORDERS_'+uid:''}catch(e){return ''}
+}
+function getPackerAcceptedOrderIds(){
+  try{const k=packerAcceptedKey();if(!k)return [];const a=JSON.parse(localStorage.getItem(k)||'[]');return Array.isArray(a)?a.map(String):[]}catch(e){return []}
+}
+function markPackerOrderAccepted(id){const k=packerAcceptedKey();if(!k)return;const a=getPackerAcceptedOrderIds(),sid=String(id);if(!a.includes(sid))a.push(sid);localStorage.setItem(k,JSON.stringify(a))}
+function isPackerOrderAccepted(id){return getPackerAcceptedOrderIds().includes(String(id))}
+function renderPackerOrders(){
+  if(!isPacker())return;
+  const uid=String(orderNotificationState.uid||'').trim();
+  const rows=(Array.isArray(D.packingOrders)?D.packingOrders:[]).filter(r=>r&&(!uid||String(r.assignedUid||'')===uid)).sort((a,b)=>Number(b.createdAtMs||0)-Number(a.createdAtMs||0));
+  const acceptedIds=getPackerAcceptedOrderIds();
+  const pending=rows.filter(r=>r.status!=='completed'&&!acceptedIds.includes(String(r.id)));
+  const accepted=rows.filter(r=>r.status!=='completed'&&acceptedIds.includes(String(r.id)));
+  const done=rows.filter(r=>r.status==='completed');
+  const n=$('packerOrderNotice');
+  if(n){n.classList.toggle('hidden',!pending.length&&!accepted.length);n.innerHTML=(pending.length||accepted.length)?`🔔 Bạn có <b>${pending.length+accepted.length}</b> đơn chưa hoàn thành.`:''}
+  const box=$('packerOrders');if(!box)return;
+  const card=r=>{
+    const selected=String(r.id)===String(selectedOrderId);
+    const pay=(Number(r.packSize)||0)*rate(r.size);
+    const img=r.completionImage?`<img src="${r.completionImage}" onclick="openImageSrc(this.src,'Ảnh hoàn thành đơn hàng')" alt="Ảnh hoàn thành">`:'';
+    return `<div id="packer-order-${esc(String(r.id))}" class="order-card ${r.status==='completed'?'done':'pending'}" style="${selected?'border:2px solid #0ca566':''}"><div class="order-head"><div><div class="order-title">🌿 ${esc(r.plantName||'Cây')} · ${esc(r.size||'')}</div><div class="order-meta">📦 Đơn #${esc(r.orderNo||String(r.id||'').slice(-6))} · Combo ${Number(r.packSize)||0} cây · ${esc(r.employee||currentPackerName())}</div></div><span class="order-badge ${r.status==='completed'?'done':''}">${r.status==='completed'?'✅ Đã hoàn thành':acceptedIds.includes(String(r.id))?'📋 Đã nhận':'🔔 Chờ nhận'}</span></div>${r.status==='completed'?`<div class="order-proof">${img}<div><b>Đã có ảnh hoàn thành</b><div class="tiny muted">${r.completedAtMs?new Date(r.completedAtMs).toLocaleString('vi-VN'):''}</div></div></div>`:acceptedIds.includes(String(r.id))?`<button type="button" class="secondary" style="margin-top:9px;width:100%" onclick="selectAssignedOrder('${esc(String(r.id))}')">${selected?'Đang chọn đơn này':'📋 ĐÓNG ĐƠN NÀY'}</button>`:`<button type="button" class="primary" style="margin-top:9px;width:100%" onclick="acceptAssignedOrder('${esc(String(r.id))}')">📥 NHẬN ĐƠN</button>`}</div>`;
+  };
+  let html=`<div class="section-title" style="margin-top:4px"><h3>📥 Đơn chờ nhận</h3><span class="badge">${pending.length}</span></div>`;
+  html+=pending.length?pending.map(card).join(''):'<div class="card empty">Không có đơn mới.</div>';
+  html+=`<div class="section-title" style="margin-top:16px"><h3>📋 ĐƠN ĐÃ NHẬN · CẦN HOÀN THÀNH</h3><span class="badge">${accepted.length}</span></div>`;
+  html+=accepted.length?accepted.map(card).join(''):'<div class="card empty">Chưa có đơn đã nhận.</div>';
+  html+=`<div class="section-title" style="margin-top:16px"><h3>✅ Đơn đã hoàn thành</h3><span class="badge">${done.length}</span></div>`;
+  html+=done.length?done.map(card).join(''):'<div class="card empty">Chưa có đơn hoàn thành.</div>';
+  box.innerHTML=html;
+  const panel=$('packerProofPanel');if(panel)panel.classList.toggle('hidden',!selectedOrderId||!accepted.some(r=>String(r.id)===String(selectedOrderId)));
+}
+async function acceptAssignedOrder(id){
+  if(!isPacker()){toast('Tài khoản hiện tại không phải nhân viên đóng hàng');return false}
+  const uid=String(orderNotificationState.uid||CloudSync.state()?.user?.uid||'').trim();
+  if(!uid){toast('Chưa xác nhận được tài khoản nhân viên. Vui lòng chờ kết nối hoàn tất.');return false}
+  const r=(D.packingOrders||[]).find(x=>String(x.id)===String(id));
+  if(!r||String(r.assignedUid||'')!==uid){toast('Đơn hàng không thuộc tài khoản hiện tại');return false}
+  if(r.status==='completed'){toast('Đơn này đã hoàn thành');return false}
+  markPackerOrderAccepted(id);selectedOrderId=null;resetPackProof();closeOrderNotifications();renderPackerOrders();toast('✅ Đã nhận đơn. Đơn đã chuyển sang danh sách cần hoàn thành');return true;
+}
+function selectAssignedOrder(id){
+  const r=(D.packingOrders||[]).find(x=>String(x.id)===String(id));
+  if(!r||r.status==='completed')return;
+  if(!isPackerOrderAccepted(id)){toast('Hãy bấm NHẬN ĐƠN trước khi đóng hàng');return}
+  selectedOrderId=id;pendingPackPhoto='';resetPackProof();selectedOrderId=id;renderPackerOrders();
+  $('packProofStatus').textContent=`Đơn ${r.orderNo||r.id.slice(-6)} · Combo ${r.packSize} cây. Chụp ảnh sau khi đóng xong.`;toast('Đã chọn đơn cần đóng');
+}
+function readPackProofImage(ev){
+  const f=ev.target.files?.[0];if(!f)return;
+  if(!String(f.type||'').startsWith('image/')){toast('Chỉ được chụp ảnh');ev.target.value='';return}
+  const reader=new FileReader();reader.onload=()=>{const img=new Image();img.onload=()=>{const max=900,scale=Math.min(1,max/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));const ctx=c.getContext('2d');ctx.drawImage(img,0,0,c.width,c.height);pendingPackPhoto=c.toDataURL('image/jpeg',.76);const pv=$('packProofPreview');pv.classList.remove('hidden');pv.innerHTML=`<img src="${pendingPackPhoto}" onclick="openImageSrc(this.src,'Ảnh hoàn thành đơn hàng')" alt="Ảnh hoàn thành"><div><b>✅ Đã chụp ảnh</b><div class="tiny muted">Chỉ sau khi có ảnh mới được xác nhận hoàn thành.</div></div>`;$('packProofStatus').textContent='Ảnh hợp lệ. Có thể xác nhận hoàn thành đơn.';if($('packSubmitBtn'))$('packSubmitBtn').disabled=false};img.src=reader.result};reader.readAsDataURL(f);ev.target.value=''
+}
+function resetPackProof(){pendingPackPhoto='';packerEditingId=null;if($('packSubmitBtn')){$('packSubmitBtn').disabled=true;$('packSubmitBtn').textContent='🔒 XÁC NHẬN HOÀN THÀNH ĐƠN'}if($('packProofStatus'))$('packProofStatus').textContent='Chưa chọn đơn hoặc chưa chụp ảnh.';if($('packProofPreview')){$('packProofPreview').classList.add('hidden');$('packProofPreview').innerHTML=''}}
+async function completeAssignedOrder(){if(!selectedOrderId){toast('Hãy chọn đơn cần đóng');return}if(!pendingPackPhoto){toast('📷 Phải chụp ảnh hoàn thành trước khi ghi nhận');return}try{const session=await CloudSync.ensureActionSession(8000);if(!session||session.role!=='packer'){toast('Không xác nhận được phiên Firebase hiện tại. Vui lòng thử lại sau giây lát.');return}const r=await CloudSync.state().completePackingOrder(selectedOrderId,pendingPackPhoto);const local=(D.packingOrders||[]).find(x=>x.id===selectedOrderId);if(local)Object.assign(local,r);const recRow={id:r.id,...r,uid:session.user.uid,employee:r.employee||currentPackerName(),qty:Number(r.packSize)||0,plantIndex:Number(r.plantIndex),date:r.date||String(r.createdAtDate||''),payAdjustment:Number(r.payAdjustment)||0,payAdjustmentNote:r.payAdjustmentNote||''};D.packerRecords=[recRow,...(D.packerRecords||[]).filter(x=>String(x.id)!==String(r.id))];rebuildPackerDaily();selectedOrderId=null;resetPackProof();renderAll();toast('✅ Đã hoàn thành đơn. Tiền công đã được ghi nhận');}catch(e){console.error('completeAssignedOrder',e);toast(e?.message||'Không thể hoàn thành đơn')}}
+async function addPackerEntry(){toast('Nhân viên không nhập số cây. Hãy chọn đơn Admin phân công và chụp ảnh hoàn thành.')}
+function startPackerEdit(id){toast('Bản ghi đóng hàng theo đơn đã hoàn thành, không sửa từ màn hình nhân viên.')}
+async function deletePackerRecord(id){toast('Nhân viên không được xóa đơn đã hoàn thành.')}
+let pendingAdminPackPhoto='';
+function readAdminPackProofImage(ev){
+  const f=ev.target.files?.[0];if(!f)return;
+  if(!String(f.type||'').startsWith('image/')){toast('Chỉ được chụp ảnh');ev.target.value='';return}
+  const reader=new FileReader();reader.onload=()=>{const img=new Image();img.onload=()=>{const max=900,scale=Math.min(1,max/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));const ctx=c.getContext('2d');ctx.drawImage(img,0,0,c.width,c.height);pendingAdminPackPhoto=c.toDataURL('image/jpeg',.76);const pv=$('adminPackProofPreview');pv.classList.remove('hidden');pv.innerHTML=`<img src="${pendingAdminPackPhoto}" onclick="openImageSrc(this.src,'Ảnh bằng chứng đóng hàng')" alt="Ảnh bằng chứng"><div><b>✅ Đã chụp ảnh</b><div class="tiny muted">Có thể ghi nhận đóng hàng.</div></div>`;$('adminPackProofStatus').textContent='Ảnh hợp lệ. Có thể ghi nhận đóng hàng.';$('adminPackSubmitBtn').disabled=false};img.src=reader.result};reader.readAsDataURL(f);ev.target.value=''
+}
+function resetAdminPackProof(){pendingAdminPackPhoto='';if($('adminPackProofStatus'))$('adminPackProofStatus').textContent='Chưa chụp ảnh. Chỉ được chụp trực tiếp bằng camera.';if($('adminPackProofPreview')){$('adminPackProofPreview').classList.add('hidden');$('adminPackProofPreview').innerHTML=''}if($('adminPackSubmitBtn'))$('adminPackSubmitBtn').disabled=true}
+function addPackEntry(){if(!CloudSync.can('pack')){toast('Tài khoản này không có quyền đóng hàng');return}if(isPacker())return addPackerEntry();const date=$('dDate').value||START,pi=Number(selected.sizeIndex),ei=Number(selected.empIndex),qty=Math.floor(Number($('eQty').value)||0),combo=Math.max(1,Number($('adminPackCombo')?.value)||1);if(!Number.isInteger(pi)||!D.catalog[pi]||!employees()[ei]||qty<=0){toast('Vui lòng chọn đủ cây, kích thước, nhân viên và số cây');return}if(!pendingAdminPackPhoto){toast('📷 Vui lòng chụp ảnh bằng chứng trước khi ghi nhận');return}const e=employees()[ei],x=rec(date,pi,true);x.counts=x.counts||{};x.counts[e]=(Number(x.counts[e])||0)+qty;x.comboSize=x.comboSize||{};x.comboSize[e]=combo;x.proofImages=x.proofImages||{};x.proofImages[e]=pendingAdminPackPhoto;x.proofTimes=x.proofTimes||{};x.proofTimes[e]=Date.now();x.proofCapturedBy=x.proofCapturedBy||{};x.proofCapturedBy[e]=CloudSync.state()?.user?.uid||'';save();$('eQty').value=1;if($('adminPackCombo'))$('adminPackCombo').value='1';resetAdminPackProof();renderAll();toast(`Đã ghi ${qty} cây · ${e}${combo>1?' · Combo '+combo+' cây':''}`)}
+function addInEntry(){if(!CloudSync.can('in')){toast('Tài khoản này không có quyền nhập kho');return}const date=$('dDate').value||START,pi=Number(selected.inSizeIndex),qty=Math.floor(Number($('inQty').value)||0);if(!Number.isInteger(pi)||!D.catalog[pi]||qty<=0){toast('Vui lòng chọn cây, kích thước và số lượng');return}const x=rec(date,pi,true);x.in=(Number(x.in)||0)+qty;save();$('inQty').value=1;renderAll();toast(`Đã ghi nhập ${qty} cây`)}
+function removePack(date,pi,e){if(!CloudSync.can('pack')){toast('Tài khoản này không có quyền xóa bản ghi đóng hàng');return}const x=rec(date,pi);const q=Number(x?.counts?.[e])||0;if(!x||q<=0){toast('Không tìm thấy số cây cần xóa');return}delete x.counts[e];if(x.adjustments)x.adjustments=x.adjustments.filter(a=>a.employee!==e);cleanupRec(x);save();renderAll();toast(`Đã xóa ${Math.round(q)} cây của ${e}`)}
+function removeIn(date,pi,qty){if(!CloudSync.can('in')){toast('Tài khoản này không có quyền hoàn tác nhập kho');return}const x=rec(date,pi);if(!x)return;x.in=Math.max(0,(Number(x.in)||0)-Number(qty));cleanupRec(x);save();renderAll();toast('Đã hoàn tác nhập kho')}
+function cleanupRec(x){if(!(Number(x.in)||0)&&!outOf(x)){const i=D.daily.indexOf(x);if(i>=0)D.daily.splice(i,1)}}
+function renderPackerDay(){
+  renderPackerOrders();
+  const date=$('dDate').value||START;const rows=(D.packerRecords||[]).filter(r=>r.date===date);const total=rows.reduce((s,r)=>s+(Number(r.qty)||0),0);$('dayIn').textContent='—';$('dayOut').textContent=Math.round(total);$('dayPay').textContent=money(rows.reduce((s,r)=>s+(Number(r.qty)||0)*rate(r.size)+(Number(r.payAdjustment)||0),0));$('dayTotalBadge').textContent=`${Math.round(total)} cây đã hoàn thành`;
+  let html='';if(!rows.length)html=`<div class="card empty">Chưa có đơn hoàn thành trong ngày này.</div>`;rows.forEach(r=>{const img=r.image?`<img class="pack-record-photo" src="${r.image}" onclick="openImageSrc(this.src,'Ảnh hoàn thành đơn hàng')" alt="">`:'';html+=`<div class="card"><div class="section-title"><div class="plant-row">${img}<div><h3>${esc(r.plantName||'Cây')}</h3><div class="tiny muted">${esc(r.size||'')} · Combo ${Math.round(r.qty||0)} cây · ${money((Number(r.qty)||0)*rate(r.size))}</div></div></div><span class="pack-lock locked">✅ Đã hoàn thành</span></div></div>`});$('dayBody').innerHTML=html;updatePackInfo();updateInInfo();}
+function isPacker(){
+  try{
+    return !!(window.CloudSync && CloudSync.state && CloudSync.state().role==='packer');
+  }catch(e){
+    return false;
+  }
+}
+function isAdminUser(){return !!(window.CloudSync&&CloudSync.state().role==='admin')}
+function renderAdminPackerRecords(date){
+  if(!isAdminUser())return;const rows=(D.packerRecords||[]).filter(r=>r.date===date);if(!rows.length)return;let html=`<div class="card" style="border:2px solid #cfe8da"><div class="section-title"><h3>👑 Bản ghi đóng hàng của nhân viên</h3><span class="badge">Admin toàn quyền</span></div>`;
+  rows.forEach(r=>{const img=r.image?`<img class="pack-record-photo" src="${r.image}" onclick="openImageSrc(this.src,'Ảnh bằng chứng · ${esc(r.employee||'')}')" alt="">`:'';html+=`<div class="entry"><div class="plant-row">${img}<div><div class="name">${esc(r.employee||'Nhân viên')} · ${esc(r.plantName||'')}</div><div class="meta">${esc(r.size||'')} · ${Math.round(r.qty||0)} cây · ${money((Number(r.qty)||0)*rate(r.size))}</div></div></div><div class="pack-record-actions"><button class="secondary" onclick="adminEditPackerQty('${r.id}')">Sửa SL</button><button class="remove" onclick="adminDeletePacker('${r.id}')">Xóa</button></div></div>`});html+='</div>';$('dayBody').insertAdjacentHTML('beforeend',html);
+}
+async function adminEditPackerQty(id){const r=(D.packerRecords||[]).find(x=>x.id===id);if(!r)return;const q=prompt('Nhập số cây mới cho bản ghi của '+(r.employee||'nhân viên'),String(Math.round(r.qty||0)));if(q===null)return;const qty=Math.floor(Number(q)||0);if(qty<=0){toast('Số lượng không hợp lệ');return}try{await CloudSync.adminUpdatePackerRecord(id,{qty,packSize:qty});r.qty=qty;rebuildPackerDaily();localSaveOnly();renderAll();toast('Admin đã cập nhật số lượng')}catch(e){toast(e?.message||'Không thể cập nhật bản ghi')}}
+async function adminDeletePacker(id){if(!confirm('Admin xóa bản ghi đóng hàng này?'))return;try{await CloudSync.adminDeletePackerRecord(id);D.packerRecords=D.packerRecords.filter(x=>x.id!==id);renderAll();toast('Admin đã xóa bản ghi')}catch(e){toast(e?.message||'Không thể xóa bản ghi')}}
+function mergePackerTotalsIntoReport(by,from,to){let out=0,pay=0;(D.packerRecords||[]).filter(r=>r.date>=from&&r.date<=to).forEach(r=>{const e=r.employee||'Nhân viên';if(!by[e])by[e]={qty:0,pay:0};const q=Number(r.qty)||0;by[e].qty+=q;by[e].pay+=q*rate(r.size)+(Number(r.payAdjustment)||0);out+=q;pay+=q*rate(r.size)+(Number(r.payAdjustment)||0)});return {out,pay}}
+function renderDay(){if(!$('dDate').value)$('dDate').value=START;if(isPacker()){renderPackerDay();return}setEntryMode(entryMode);const date=$('dDate').value;const allEntries=dayEntries(date);const entries=allEntries.filter(x=>entryMode==='in'?Number(x.in)>0:outOf(x)>0);let totalIn=0,totalOut=0,totalPay=0;allEntries.forEach(x=>{totalIn+=Number(x.in)||0;totalOut+=outOf(x);totalPay+=payOf(x)});$('dayIn').textContent=Math.round(totalIn);$('dayOut').textContent=Math.round(totalOut);$('dayPay').textContent=money(totalPay);$('dayTotalBadge').textContent=entryMode==='in'?`${Math.round(totalIn)} cây nhập`:`${Math.round(totalOut)} cây đóng`;
+ let html='';if(!entries.length)html=`<div class="card empty">Chưa có dữ liệu ${entryMode==='in'?'nhập kho':'đóng hàng'} trong ngày này.<br><span class="tiny">Hãy chọn ${entryMode==='in'?'Nhập kho':'Đóng hàng'} ở phía trên.</span></div>`;else entries.forEach(x=>{const p=D.catalog[x.plantIndex];if(!p)return;const img=`<img class="plant-thumb plant-photo-click" src="${imageSrc(p)}" onerror="this.src='logo.png'" onclick="openPlantImage(${x.plantIndex})" alt="" title="Nhấn để phóng to">`;html+=`<div class="card"><div class="section-title"><div class="plant-row"><div>${img}</div><div><h3>${esc(p.name)}</h3><div class="tiny muted">${esc(p.size||'Không ghi kích thước')} · Tồn cuối: <b>${Math.round(closing(x.plantIndex,date))}</b></div></div></div><span class="badge">${entryMode==='in'?Math.round(x.in)+' nhập':Math.round(outOf(x))+' đóng'}</span></div>`;if(entryMode==='in'){html+=`<div class="entry"><div><div class="name">📦 Nhập kho</div><div class="meta">+${Math.round(x.in)} cây</div></div><div><button class="remove" onclick="removeIn('${date}',${x.plantIndex},${Number(x.in)})">− Hoàn tác</button></div></div>`}else{Object.entries(x.counts||{}).forEach(([emp,q])=>{const wage=rate(p.size),adj=adjustmentsOf(x,emp);const proof=x.proofImages?.[emp]||'';const proofTime=Number(x.proofTimes?.[emp]||0);html+=`<div class="entry"><div style="min-width:0"><div class="name">${esc(emp)}</div><div class="meta">${Math.round(q)} cây × ${money(wage)}/cây${adj?` · Điều chỉnh ${adj>0?'+':''}${money(adj)}`:''}</div>${proof?`<div class="pack-proof-inline"><img class="pack-record-photo" src="${proof}" onclick="openImageSrc(this.src,'Ảnh bằng chứng · ${esc(emp)} · ${esc(p.name)} ${esc(p.size||'')}')" alt="Ảnh bằng chứng"><span class="tiny muted">📷 Có ảnh bằng chứng${proofTime?` · ${new Date(proofTime).toLocaleString('vi-VN')}`:''}</span></div>`:`<div class="tiny muted">⚠️ Chưa có ảnh bằng chứng</div>`}</div><div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end"><div class="amount">${money(Number(q)*wage+adj)}</div><button type="button" class="adjust" onclick="openAdjustMoney('${date}',${x.plantIndex},'${encodeURIComponent(emp)}')">± Tiền</button><button type="button" class="remove" data-remove-pack data-date="${date}" data-pi="${x.plantIndex}" data-emp="${encodeURIComponent(emp)}" aria-label="Xóa số cây đã ghi">− Xóa</button></div></div>`})}html+=`<div class="stock" style="margin-top:9px"><div class="box"><span>Đầu ngày</span><b>${Math.round(opening(x.plantIndex,date))}</b></div><div class="box closing"><span>Tồn cuối</span><b>${Math.round(closing(x.plantIndex,date))}</b></div></div></div>`});$('dayBody').innerHTML=html;renderAdminPackerRecords(date);if(isAdminUser()){const pr=(D.packerRecords||[]).filter(r=>r.date===date);totalOut+=pr.reduce((s,r)=>s+(Number(r.qty)||0),0);totalPay+=pr.reduce((s,r)=>s+(Number(r.qty)||0)*rate(r.size)+(Number(r.payAdjustment)||0),0);$('dayOut').textContent=Math.round(totalOut);$('dayPay').textContent=money(totalPay);$('dayTotalBadge').textContent=entryMode==='in'?`${Math.round(totalIn)} cây nhập`:`${Math.round(totalOut)} cây đóng`;}updatePackInfo();updateInInfo()}
+function renderCycles(){const ref=$('dDate')?.value||START;let idx=Math.max(0,Math.floor(daysBetween(START,ref)/7));let html='';for(let k=Math.max(0,idx-5);k<=idx;k++){let s=addDays(START,k*7),e=addDays(s,6);if(s>END)break;if(e>END)e=END;let vals=employees().map(emp=>D.daily.filter(x=>x.date>=s&&x.date<=e).reduce((sum,x)=>sum+employeePay(x,emp),0));html+=`<div class="entry"><div><div class="name">Kỳ ${String(k+1).padStart(2,'0')}</div><div class="meta">${fmtDMY(s)} – ${fmtDMY(e)}</div></div><div class="amount">${money(vals.reduce((a,b)=>a+b,0))}</div></div>`}$('cycles').innerHTML=html||'<div class="empty">Chưa có dữ liệu.</div>'}
+function shiftStockDay(n){const input=$('stockDate');let d=dateObj(input.value||START);d.setDate(d.getDate()+n);let s=fmt(d);if(s<START)s=START;if(s>END)s=END;input.value=s;renderStock()}
+function clearStockSearch(){if($('stockSearch'))$('stockSearch').value='';renderStock()}
+function setStockFilter(f){stockFilter=f;document.querySelectorAll('[data-stock-filter]').forEach(b=>b.classList.toggle('active',b.dataset.stockFilter===f));renderStock()}
+function renderStock(){
+ const date=$('stockDate')?.value||$('dDate').value||START;
+ if($('stockDateBadge'))$('stockDateBadge').textContent=fmtDMY(date);
+ const allRows=activeCatalog().map(o=>{const x=rec(date,o.i);return {o,in:Number(x?.in)||0,out:outOf(x),open:opening(o.i,date),close:closing(o.i,date)}});
+ const totalIn=allRows.reduce((s,r)=>s+r.in,0),totalOut=allRows.reduce((s,r)=>s+r.out,0),totalClose=allRows.reduce((s,r)=>s+Math.max(0,r.close),0);
+ const q=($('stockSearch')?.value||'').trim().toLowerCase();
+ const rows=allRows.filter(r=>{
+   const hay=`${r.o.p.name||''} ${r.o.p.size||''}`.toLowerCase();
+   const match=!q||hay.includes(q); const c=Math.max(0,r.close);
+   const status=stockFilter==='in'?c>0:stockFilter==='low'?c>0&&c<=10:stockFilter==='zero'?c<=0:true;
+   return match&&status;
+ }).sort((a,b)=>String(a.o.p.name||'').localeCompare(String(b.o.p.name||''),'vi')||String(a.o.p.size||'').localeCompare(String(b.o.p.size||''),'vi'));
+ if($('stockCount'))$('stockCount').textContent=`Hiển thị ${rows.length}/${allRows.length} cây/kích thước`;
+ let html=`<div class="card"><div class="section-title"><h3>Tổng quan ngày ${fmtDMY(date)}</h3><span class="badge">${Math.round(totalClose)} cây tồn</span></div><div class="grid2"><div class="stat"><span>Đầu ngày</span><b>${Math.round(allRows.reduce((s,r)=>s+r.open,0))}</b></div><div class="stat"><span>Nhập kho</span><b>${Math.round(totalIn)}</b></div><div class="stat"><span>Đóng hàng</span><b>${Math.round(totalOut)}</b></div><div class="stat"><span>Tồn cuối</span><b>${Math.round(totalClose)}</b></div></div></div>`;
+ html+=rows.map(r=>{const c=Math.max(0,r.close);const status=c<=0?'<span class="stock-status empty">HẾT</span>':c<=10?'<span class="stock-status low">SẮP HẾT</span>':'<span class="stock-status">CÒN HÀNG</span>';return `<div class="card stock-card"><div class="stock-head"><div class="stock-main"><img class="plant-thumb-lg plant-photo-click" src="${imageSrc(r.o.p)}" onerror="this.src='logo.png'" onclick="openPlantImage(${r.o.i})" alt="" title="Nhấn để phóng to"><div style="min-width:0"><div class="stock-title">${esc(r.o.p.name)}</div><div class="tiny muted">${esc(r.o.p.size||'Không ghi kích thước')}</div></div></div>${status}</div><div class="stock-grid"><div class="mini"><span>Đầu ngày</span><b>${Math.round(r.open)}</b></div><div class="mini"><span>Nhập</span><b>${Math.round(r.in)}</b></div><div class="mini"><span>Đóng</span><b>${Math.round(r.out)}</b></div><div class="mini closing"><span>Tồn cuối</span><b>${Math.round(r.close)}</b></div></div></div>`}).join('');
+ if(!rows.length)html+=`<div class="card empty">Không tìm thấy cây phù hợp. Hãy thử tên cây, mã C7/C9/C10... hoặc chọn “Tất cả”.</div>`;
+ $('stockBody').innerHTML=html;
+}
+
+function syncReportDateLimits(){const a=$('rFrom').value||START,b=$('rTo').value||a;if(a&&b&&a>b)$('rTo').value=a;if($('rFrom')){$('rFrom').min=START;$('rFrom').max=END}if($('rTo')){$('rTo').min=START;$('rTo').max=END}}
+function onReportFromChange(){const a=$('rFrom').value||START;if(($('rTo').value||'')<a)$('rTo').value=a;syncReportDateLimits();renderReport()}
+function onReportToChange(){const b=$('rTo').value||START;if(($('rFrom').value||'')>b)$('rFrom').value=b;syncReportDateLimits();renderReport()}
+function renderPackerReport(from,to){
+  const rows=(D.packerRecords||[]).filter(r=>r.date>=from&&r.date<=to);const qty=rows.reduce((s,r)=>s+(Number(r.qty)||0),0);const pay=rows.reduce((s,r)=>s+(Number(r.qty)||0)*rate(r.size)+(Number(r.payAdjustment)||0),0);let by={};rows.forEach(r=>{const k=r.date;by[k]=(by[k]||0)+(Number(r.qty)||0)});
+  let html=`<div class="card"><div class="section-title"><h3>📊 Báo cáo của tôi · ${fmtDMY(from)} – ${fmtDMY(to)}</h3></div><div class="grid2"><div class="stat"><span>Cây đã đóng</span><b>${Math.round(qty)}</b></div><div class="stat"><span>Tiền công</span><b>${money(pay)}</b></div></div></div><div class="card"><div class="section-title"><h3>Chi tiết từng ngày</h3></div>`;
+  const dates=[];for(let d=from;d<=to;d=addDays(d,1))dates.push(d);dates.forEach(d=>{html+=`<div class="report-row"><div class="top"><span>${fmtDMY(d)}</span><span>${Math.round(by[d]||0)} cây</span></div><div class="tiny muted">${money(rows.filter(r=>r.date===d).reduce((s,r)=>s+(Number(r.qty)||0)*rate(r.size)+(Number(r.payAdjustment)||0),0))}</div></div>`});html+='</div>';$('reportBody').innerHTML=html;
+}
+function renderReport(){syncReportDateLimits();const from=$('rFrom').value||START,to=$('rTo').value||from;if(isPacker()){renderPackerReport(from,to);return}const by={};employees().forEach(e=>by[e]={qty:0,pay:0});let totalIn=0,totalOut=0;D.daily.filter(x=>x.date>=from&&x.date<=to).forEach(x=>{totalIn+=Number(x.in)||0;totalOut+=outOf(x);employees().forEach(e=>{by[e].qty+=Number(x.counts?.[e])||0;by[e].pay+=employeePay(x,e)})});if(isAdminUser()){const extra=mergePackerTotalsIntoReport(by,from,to);totalOut+=extra.out}const totalPayDay=Object.values(by).reduce((s,x)=>s+x.pay,0);let html=`<div class="card"><div class="section-title"><h3>Tổng hợp ${fmtDMY(from)} – ${fmtDMY(to)}</h3></div><div class="grid2"><div class="stat"><span>Nhập kho</span><b>${Math.round(totalIn)}</b></div><div class="stat"><span>Đóng hàng</span><b>${Math.round(totalOut)}</b></div><div class="stat"><span>Tiền công</span><b>${money(totalPayDay)}</b></div><div class="stat"><span>Tồn cuối</span><b>${Math.round(totalStock(to))}</b></div></div></div>`;
+ const maxPay=Math.max(1,...Object.values(by).map(x=>x.pay));html+=`<div class="card"><div class="section-title"><h3>Tiền công theo nhân viên</h3></div>`;employees().forEach(e=>{html+=`<div class="report-row"><div class="top"><span>${esc(e)}</span><span>${money(by[e].pay)}</span></div><div class="tiny muted">${Math.round(by[e].qty)} cây</div><div class="bar"><i style="width:${Math.min(100,by[e].pay/maxPay*100)}%"></i></div></div>`});html+=`</div>`;
+ // Hiển thị đầy đủ từng ngày trong đúng khoảng người dùng đã chọn, kể cả ngày không có phát sinh.
+ html+=`<div class="card"><div class="section-title"><h3>Chi tiết từng ngày</h3><span class="badge">${fmtDMY(from)} → ${fmtDMY(to)}</span></div>`;
+ for(let d=from; d<=to; d=addDays(d,1)){let dayRows=D.daily.filter(x=>x.date===d);let di=dayRows.reduce((s,x)=>s+(Number(x.in)||0),0);let dout=dayRows.reduce((s,x)=>s+outOf(x),0);let dpay=dayRows.reduce((s,x)=>s+payOf(x),0);html+=`<div class="entry"><div><div class="name">${fmtDMY(d)}</div><div class="meta">Nhập ${Math.round(di)} cây · Đóng ${Math.round(dout)} cây · Tồn cuối ${Math.round(totalStock(d))} cây</div></div><div class="amount">${money(dpay)}</div></div>`}html+=`</div>`;
+ const plantTotals={};D.daily.filter(x=>x.date>=from&&x.date<=to).forEach(x=>{const p=D.catalog[x.plantIndex];if(!p)return;const key=x.plantIndex;plantTotals[key]=(plantTotals[key]||0)+outOf(x)});html+=`<div class="card"><div class="section-title"><h3>Sản lượng theo cây/kích thước</h3></div>`;const arr=Object.entries(plantTotals).sort((a,b)=>b[1]-a[1]);html+=arr.length?arr.map(([pi,q])=>{const p=D.catalog[pi];return `<div class="entry"><div><div class="name">${esc(p.name)}</div><div class="meta">${esc(p.size||'Không ghi kích thước')}</div></div><div class="amount">${Math.round(q)} cây</div></div>`}).join(''):'<div class="empty">Chưa có sản lượng trong khoảng này.</div>';html+=`</div>`;
+ html+=`<div class="card"><div class="section-title"><h3>Kỳ trả lương 7 ngày (tham khảo)</h3></div>`;let no=1;for(let s=START;s<=END;s=addDays(s,7),no++){let e=addDays(s,6);if(e>END)e=END;if(e<from||s>to)continue;let aa=s<from?from:s,bb=e>to?to:e;let vals=employees().map(emp=>D.daily.filter(x=>x.date>=aa&&x.date<=bb).reduce((sum,x)=>sum+employeePay(x,emp),0));html+=`<div class="entry"><div><div class="name">Kỳ ${String(no).padStart(2,'0')}</div><div class="meta">${fmtDMY(aa)} – ${fmtDMY(bb)}</div></div><div class="amount">${money(vals.reduce((a,b)=>a+b,0))}</div></div>`}html+=`</div>`;$('reportBody').innerHTML=html}
+function renderControls(){renderEmployees();renderRates();renderPlantControls();renderOpening();renderUserManagement();applyPermissionsUI()}
+function renderEmployees(){$('empList').innerHTML=employees().length?employees().map((e,i)=>`<div class="control-item"><div class="control-head"><span class="control-title">${esc(e)}</span><button class="secondary" onclick="openEditEmployee(${i})">Sửa</button></div><div class="tiny muted">Tiền công được tự tính theo từng kích thước.</div></div>`).join(''):'<div class="empty">Chưa có nhân viên.</div>'}
+function renderRates(){$('rateList').innerHTML=D.rates.length?D.rates.map((r,i)=>`<div class="control-item"><div class="control-head"><div><div class="control-title">${esc(r.size)}</div><div class="tiny muted">${money(r.rate)} / cây</div></div><div class="actions"><button class="secondary" onclick="openEditRate(${i})">Sửa</button><button class="danger" onclick="deleteRate(${i})">Xóa</button></div></div></div>`).join(''):'<div class="empty">Chưa có đơn giá.</div>'}
+function renderPlantControls(){const q=($('plantSearch')?.value||'').trim().toLowerCase();const arr=activeCatalog().filter(o=>!q||String(o.p.name).toLowerCase().includes(q)||String(o.p.size).toLowerCase().includes(q));$('plantList').innerHTML=arr.slice(0,60).map(o=>`<div class="control-item"><div class="control-head"><div class="plant-row"><img class="plant-thumb plant-photo-click" src="${o.p.image||'logo.png'}" onerror="this.src='logo.png'" onclick="openPlantImage(${o.i})" alt="" title="Nhấn để phóng to"><div class="plant-main"><div class="control-title">${esc(o.p.name)}</div><div class="tiny muted">${esc(o.p.size||'Không ghi kích thước')} · Giá cây ${money(o.p.price)}</div></div></div><button class="secondary" onclick="openEditPlant(${o.i})">Sửa</button></div></div>`).join('')+(arr.length>60?`<div class="empty">Đang hiển thị 60 kết quả. Hãy tìm tên cây cụ thể.</div>`:'');}
+function renderOpening(){$('openingList').innerHTML=activeCatalog().map(o=>`<div class="control-item"><div class="control-head"><div><div class="control-title">${esc(o.p.name)}</div><div class="tiny muted">${esc(o.p.size||'Không ghi kích thước')}</div></div><input style="width:110px;padding:9px;border:1px solid #d6e1dc;border-radius:10px;text-align:right" type="number" min="0" value="${Number(D.opening[o.i])||0}" onchange="D.opening[${o.i}]=Math.max(0,Number(this.value)||0);save();renderAll();toast('Đã lưu tồn đầu kỳ')"></div></div>`).join('')}
+function openEditEmployee(i){$('editTitle').textContent=i<0?'Thêm nhân viên':'Sửa nhân viên';$('editBody').innerHTML=`<div class="field"><label>Tên nhân viên</label><input id="editName" value="${i>=0?esc(employees()[i]):''}" placeholder="Ví dụ: Nam"></div><button class="primary" onclick="saveEmployeeEdit(${i})">LƯU</button>${i>=0?`<div class="actions"><button class="danger" onclick="deleteEmployee(${i})">Xóa nhân viên</button></div>`:''}`;$('editModal').classList.add('show')}
+function saveEmployeeEdit(i){const n=$('editName').value.trim();if(!n){toast('Tên nhân viên không được trống');return}if(i<0){if(employees().includes(n)){toast('Tên nhân viên đã tồn tại');return}D.employees.push(n)}else{const old=D.employees[i];if(n!==old&&employees().includes(n)){toast('Tên nhân viên đã tồn tại');return}D.employees[i]=n;D.daily.forEach(x=>{if(x.counts&&x.counts[old]!=null){x.counts[n]=(Number(x.counts[n])||0)+(Number(x.counts[old])||0);delete x.counts[old]}})}save();closeEdit();renderAll();toast('Đã lưu nhân viên')}
+function deleteEmployee(i){const old=employees()[i];if(!confirm(`Xóa ${old}? Lịch sử của người này sẽ được bỏ khỏi báo cáo.`))return;D.employees.splice(i,1);D.daily.forEach(x=>{if(x.counts)delete x.counts[old]});save();closeEdit();renderAll();toast('Đã xóa nhân viên')}
+function openEditRate(i){const r=i>=0?D.rates[i]:{size:'',rate:0};$('editTitle').textContent=i<0?'Thêm đơn giá':'Sửa đơn giá';$('editBody').innerHTML=`<div class="field"><label>Kích thước</label><input id="editSize" value="${esc(r.size)}" placeholder="C6, C7, C9..."></div><div class="field"><label>Tiền công / cây (VNĐ)</label><input id="editRate" type="number" min="0" value="${Number(r.rate)||0}"></div><button class="primary" onclick="saveRateEdit(${i})">LƯU</button>`;$('editModal').classList.add('show')}
+function saveRateEdit(i){const size=$('editSize').value.trim();const ratev=Math.max(0,Number($('editRate').value)||0);if(!size){toast('Kích thước không được trống');return}if(D.rates.some((r,j)=>j!==i&&String(r.size).toLowerCase()===size.toLowerCase())){toast('Kích thước đã có đơn giá');return}if(i<0)D.rates.push({size,rate:ratev});else D.rates[i]={size,rate:ratev};save();closeEdit();renderAll();toast('Đã lưu đơn giá')}
+function deleteRate(i){if(!confirm(`Xóa đơn giá ${D.rates[i].size}?`))return;D.rates.splice(i,1);save();renderAll();toast('Đã xóa đơn giá')}
+function openEditPlant(i){const p=i>=0?D.catalog[i]:{name:'',size:'',price:0,image:''};pendingPlantImage=p.image||'';$('editTitle').textContent=i<0?'Thêm cây':'Sửa cây';$('editBody').innerHTML=`<div class="field"><label>Tên cây</label><input id="editPlantName" value="${esc(p.name)}"></div><div class="field"><label>Kích thước</label><input id="editPlantSize" value="${esc(p.size||'')}" placeholder="C7, C9..."></div><div class="field"><label>Giá cây (VNĐ)</label><input id="editPlantPrice" type="number" min="0" value="${Number(p.price)||0}"></div><div class="field"><label>Hình ảnh cây</label><div id="plantPhotoPreview" class="photo-preview">${p.image?`<img src="${p.image}" class="plant-photo-click" onclick="openImageSrc(this.src,'${esc(p.name)} ${esc(p.size||'')}')" alt="" title="Nhấn để phóng to">`:`<div class="empty-photo">🌿</div>`}<div><b>${p.image?'Đã có ảnh':'Chưa có ảnh'}</b><div class="tiny muted">Có thể thay ảnh nhiều lần.</div></div></div><div class="photo-actions"><button type="button" class="secondary" onclick="$('plantCameraInput').click()">📷 Chụp ảnh</button><button type="button" class="secondary" onclick="$('plantGalleryInput').click()">🖼️ Thư viện ảnh</button><button type="button" class="danger" onclick="clearPlantImage()">Xóa ảnh</button></div><input id="plantCameraInput" class="hidden" type="file" accept="image/*" capture="environment" onchange="readPlantImage(event)"><input id="plantGalleryInput" class="hidden" type="file" accept="image/*" onchange="readPlantImage(event)"></div><button class="primary" onclick="savePlantEdit(${i})">LƯU</button>${i>=0?`<div class="actions"><button class="danger" onclick="deletePlant(${i})">Ẩn/xóa khỏi danh mục</button></div>`:''}`;$('editModal').classList.add('show')}
+function readPlantImage(ev){const f=ev.target.files?.[0];if(!f)return;const reader=new FileReader();reader.onload=()=>{const img=new Image();img.onload=()=>{const max=520,scale=Math.min(1,max/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));const ctx=c.getContext('2d');ctx.drawImage(img,0,0,c.width,c.height);pendingPlantImage=c.toDataURL('image/jpeg',.72);$('plantPhotoPreview').innerHTML=`<img src="${pendingPlantImage}" alt=""><div><b>Ảnh mới</b><div class="tiny muted">Ảnh sẽ được lưu gọn trong điện thoại.</div></div>`};img.src=reader.result};reader.readAsDataURL(f);ev.target.value=''}
+function clearPlantImage(){pendingPlantImage='';if($('plantPhotoPreview'))$('plantPhotoPreview').innerHTML='<div class="empty-photo">🌿</div><div><b>Đã xóa ảnh</b><div class="tiny muted">Bấm LƯU để xác nhận.</div></div>'}
+function savePlantEdit(i){const name=$('editPlantName').value.trim(),size=$('editPlantSize').value.trim(),price=Math.max(0,Number($('editPlantPrice').value)||0);if(!name){toast('Tên cây không được trống');return}if(i<0){D.catalog.push({stt:D.catalog.length+1,name,size,price,image:pendingPlantImage||''});D.opening[D.catalog.length-1]=0}else{D.catalog[i]={...D.catalog[i],name,size,price,image:pendingPlantImage||'',deleted:false}}save();closeEdit();renderAll();toast('Đã lưu cây')}
+function openImageSrc(src,title='Ảnh cây'){if(!src)return;$('imageViewerImg').src=src;$('imageViewerTitle').textContent=title||'Ảnh cây';$('imageViewer').classList.add('show');document.body.style.overflow='hidden'}
+function openPlantImage(i){const p=D?.catalog?.[Number(i)];if(!p)return;openImageSrc(imageSrc(p),`${p.name||'Cây'}${p.size?' · '+p.size:''}`)}
+function closeImageViewer(){$('imageViewer').classList.remove('show');$('imageViewerImg').src='';document.body.style.overflow=''}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('imageViewer')?.classList.contains('show'))closeImageViewer()});
+function openAdjustMoney(date,pi,empEncoded){const emp=decodeURIComponent(empEncoded||'');const x=rec(date,pi,true);const current=adjustmentsOf(x,emp);$('editTitle').textContent='Điều chỉnh tiền công';$('editBody').innerHTML=`<div class="info"><b>${esc(emp)}</b><div class="tiny muted">${fmtDMY(date)} · ${esc(D.catalog[pi]?.name||'')} ${esc(D.catalog[pi]?.size||'')}</div><div class="money">Đang điều chỉnh: ${money(current)}</div></div><div class="field"><label>Số tiền điều chỉnh (VNĐ)</label><input id="adjAmount" type="number" step="1000" inputmode="numeric" value="0" placeholder="Ví dụ: 50000 hoặc -30000"></div><div class="field"><label>Ghi chú</label><input id="adjNote" placeholder="Thưởng, phụ cấp, trừ tiền..."></div><button class="primary" onclick="saveAdjustMoney('${date}',${pi},'${encodeURIComponent(emp)}')">LƯU ĐIỀU CHỈNH</button><div class="tiny muted" style="margin-top:8px">Nhập số dương để cộng, số âm để trừ. Có thể thực hiện nhiều lần.</div>`;$('editModal').classList.add('show')}
+function saveAdjustMoney(date,pi,empEncoded){const emp=decodeURIComponent(empEncoded||''),amount=Number($('adjAmount').value)||0,note=$('adjNote').value.trim();if(!amount){toast('Số tiền phải khác 0');return}const x=rec(date,pi,true);x.adjustments=x.adjustments||[];x.adjustments.push({employee:emp,amount,note,at:Date.now()});save();closeEdit();renderAll();toast(`Đã ${amount>0?'cộng':'trừ'} ${money(Math.abs(amount))}`)}
+function closeEdit(){$('editModal').classList.remove('show')}
+function csvCell(v){const s=String(v??'');return '"'+s.replace(/"/g,'""')+'"'}
+function downloadText(filename,text,mime='text/csv;charset=utf-8'){if(window.AndroidBridge&&AndroidBridge.saveFile){try{const b64=btoa(unescape(encodeURIComponent(text)));const ok=AndroidBridge.saveFile(filename,b64,mime);if(ok){toast('Đã lưu file vào Tải xuống / ROLL CÂY CẢNH');return}}catch(e){console.error(e)}}const blob=new Blob([text],{type:mime});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function exportReportCsv(){syncReportDateLimits();const from=$('rFrom').value||START,to=$('rTo').value||from;const lines=[];lines.push([csvCell('BÁO CÁO ROLL CÂY CẢNH')].join(','));lines.push([csvCell('Từ ngày'),csvCell(fmtDMY(from)),csvCell('Đến ngày'),csvCell(fmtDMY(to))].join(','));let totalIn=0,totalOut=0,totalPayValue=0;D.daily.filter(x=>x.date>=from&&x.date<=to).forEach(x=>{totalIn+=Number(x.in)||0;totalOut+=outOf(x);totalPayValue+=payOf(x)});lines.push([csvCell('Tổng nhập kho'),Math.round(totalIn),csvCell('Tổng đóng hàng'),Math.round(totalOut),csvCell('Tổng tiền công'),Math.round(totalPayValue),csvCell('Tồn cuối'),Math.round(totalStock(to))].join(','));lines.push('');lines.push(['Ngày','Cây','Kích thước','Nhập kho','Nhân viên','Số cây đóng','Đơn giá/cây','Tiền theo cây','Điều chỉnh tiền','Tổng tiền công','Tồn đầu ngày','Tồn cuối','Ghi chú điều chỉnh'].map(csvCell).join(','));D.daily.filter(x=>x.date>=from&&x.date<=to).sort((a,b)=>a.date.localeCompare(b.date)||Number(a.plantIndex)-Number(b.plantIndex)).forEach(x=>{const p=D.catalog[x.plantIndex];if(!p)return;const names=new Set([...Object.keys(x.counts||{}),...(x.adjustments||[]).map(a=>a.employee)]);if(!names.size)names.add('');names.forEach(emp=>{const q=Number(x.counts?.[emp])||0,w=rate(p.size),adj=adjustmentsOf(x,emp),total=q*w+adj;const notes=(x.adjustments||[]).filter(a=>a.employee===emp&&a.note).map(a=>a.note).join(' | ');lines.push([x.date,p.name,p.size||'',Number(x.in)||0,emp,q,w,q*w,adj,total,Math.round(opening(x.plantIndex,x.date)),Math.round(closing(x.plantIndex,x.date)),notes].map(csvCell).join(','))})});lines.push('');lines.push(['Nhân viên','Số cây','Tiền công + điều chỉnh'].map(csvCell).join(','));employees().forEach(emp=>{let qty=0,pay=0;D.daily.filter(x=>x.date>=from&&x.date<=to).forEach(x=>{qty+=Number(x.counts?.[emp])||0;pay+=employeePay(x,emp)});lines.push([emp,Math.round(qty),Math.round(pay)].map(csvCell).join(','))});downloadText(`Bao-cao-ROLL-CAY-CANH-${from}-${to}.csv`,'\ufeff'+lines.join('\r\n'));if(!(window.AndroidBridge&&AndroidBridge.saveFile))toast('Đã xuất file báo cáo CSV')}
+function exportData(){const blob=new Blob([JSON.stringify(D,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ROLL-CAY-CANH-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function importData(ev){const f=ev.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{D=JSON.parse(r.result);if(!D.opening)D.opening={};D.catalog.forEach((_,i)=>{if(D.opening[i]==null)D.opening[i]=0});save();renderAll();toast('Đã nhập dữ liệu sao lưu')}catch(e){toast('File sao lưu không hợp lệ')}};r.readAsText(f);ev.target.value=''}
+function restoreExcelDefaults(){if(!confirm('Khôi phục danh mục cây, nhân viên và đơn giá theo Excel gốc? Dữ liệu đã nhập theo ngày sẽ được giữ lại.'))return;const keepDaily=D.daily,keepOpening=D.opening;D=structuredClone(DEFAULT_DATA);D.daily=keepDaily;D.opening=keepOpening;save();renderAll();toast('Đã khôi phục danh mục Excel')}
+const CLOUD_CONFIG = window.ROLL_CAY_FIREBASE_CONFIG || null;
+const ADMIN_EMAIL='tiennt9939@gmail.com';
+const ROLE_LABELS={admin:'Quản trị viên',manager:'Quản lý',packer:'Nhân viên đóng hàng',warehouse:'Nhân viên kho',viewer:'Chỉ xem'};
+const ROLE_PERMS={admin:['pack','in','report','control','users'],manager:['pack','in','report'],packer:['pack'],warehouse:['in'],viewer:['report']};
+function notificationKey(){const st=window.CloudSync?.state?.();return st?.role==='admin'?'admin':(st?.user?.uid||'guest')}
+function updateOrderNotificationUI(pending,completed){orderNotificationState.pending=Math.max(0,Number(pending)||0);orderNotificationState.completed=Math.max(0,Number(completed)||0);const b=$('orderBellBadge'),bell=$('orderBell');if(b){b.textContent=orderNotificationState.pending>99?'99+':String(orderNotificationState.pending);b.classList.toggle('show',orderNotificationState.pending>0)}if(bell)bell.classList.toggle('has-alert',orderNotificationState.pending>0);const ac=$('adminOrderStats');const isAdmin=window.CloudSync?.state?.().role==='admin';if(ac)ac.classList.toggle('show',!!isAdmin);if(ac)ac.classList.toggle('perm-hidden',!isAdmin);if(isAdmin){$('adminPendingCount')&&($('adminPendingCount').textContent=String(orderNotificationState.pending));$('adminCompletedCount')&&($('adminCompletedCount').textContent=String(orderNotificationState.completed))}}
+function unlockOrderAlertAudio(){try{if(!orderAlertAudioCtx)orderAlertAudioCtx=new(window.AudioContext||window.webkitAudioContext)();if(orderAlertAudioCtx.state==='suspended')orderAlertAudioCtx.resume()}catch(e){}}
+function playOrderAlertSound(){try{unlockOrderAlertAudio();if(!orderAlertAudioCtx)return;const ctx=orderAlertAudioCtx;[0,0.18,0.36].forEach((delay,i)=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type='sine';o.frequency.value=i===1?880:660;g.gain.setValueAtTime(.0001,ctx.currentTime+delay);g.gain.exponentialRampToValueAtTime(.16,ctx.currentTime+delay+.02);g.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+delay+.14);o.connect(g);g.connect(ctx.destination);o.start(ctx.currentTime+delay);o.stop(ctx.currentTime+delay+.16)})}catch(e){}}
+function vibrateOrderAlert(){try{navigator.vibrate&&navigator.vibrate([120,70,120,70,180])}catch(e){}}
+function renderOrderAlertList(rows){
+  const box=$('orderAlertList');if(!box)return;
+  const pending=(Array.isArray(rows)?rows:[]).filter(x=>x&&x.status!=='completed');
+  if(!pending.length){box.innerHTML='<div class="tiny muted">Không còn đơn chờ xử lý. Danh sách đã được cập nhật.</div>';return}
+  box.innerHTML=pending.slice(0,30).map(r=>`<button type="button" class="order-alert-row" onclick="openOrderFromAlert('${esc(String(r.id||''))}')"><div><b>${esc(r.plantName||'Cây')} · ${esc(r.size||'')}</b><div class="tiny muted">Đơn #${esc(r.orderNo||String(r.id||'').slice(-6))} · Combo ${Number(r.packSize)||0} cây${r.employee?` · ${esc(r.employee)}`:''}</div></div><span>›</span></button>`).join('')+(pending.length>30?`<div class="tiny muted" style="padding:7px 2px">Còn ${pending.length-30} đơn khác.</div>`:'');
+}
+function showOrderAlert(pending,source='',rows=[]){
+  if(!Array.isArray(rows)||!rows.length)rows=Array.isArray(orderNotificationState.rows)?orderNotificationState.rows:[];
+  $('orderAlertCount')&&($('orderAlertCount').textContent=String(pending));
+  $('orderAlertText')&&($('orderAlertText').textContent=source==='admin'?`Hiện có ${pending} đơn chưa hoàn tất trong hệ thống.`:`Bạn đang có ${pending} đơn được phân công cần đóng.`);
+  renderOrderAlertList(rows);
+  $('orderAlertModal')?.classList.add('show');playOrderAlertSound();vibrateOrderAlert();
+}
+async function refreshOrdersForNotification(){
+  const st=window.CloudSync?.state?.();
+  if(!st?.user||!db)return [];
+  const watched=Array.isArray(orderNotificationState.rows)?orderNotificationState.rows.filter(Boolean):[];
+  const cached=Array.isArray(D.packingOrders)?D.packingOrders.filter(Boolean):[];
+  const filterMine=rows=>st.role==='packer'
+    ? rows.filter(x=>String(x.assignedUid||'')===String(st.user.uid))
+    : rows;
+  try{
+    // Khi người dùng CHỦ ĐỘNG bấm chuông, đọc thẳng Firestore một lần.
+    // Đây là nguồn xác nhận cuối cùng; listener chỉ dùng để cập nhật badge theo thời gian thực.
+    // Với packer, query luôn phải có assignedUid == auth.uid để khớp Security Rules.
+    let fresh=[];
+    if(st.role==='packer'){
+      const snap=await db.collection('packingOrders').where('assignedUid','==',st.user.uid).get();
+      fresh=normalizeOrders(snap.docs.map(d=>({id:d.id,...d.data()})));
+    }else if(st.role==='admin'){
+      const snap=await db.collection('packingOrders').get();
+      fresh=normalizeOrders(snap.docs.map(d=>({id:d.id,...d.data()})));
+    }
+    const freshMine=filterMine(fresh);
+    // Với nhân viên, listener đã chứng minh có đơn thì một lần get() trả []
+    // không được phép xóa danh sách đang hiển thị. Đây là điểm gây lỗi:
+    // vừa đăng nhập thấy 8 đơn, bấm XEM ĐƠN NGAY lại thành 0 đơn.
+    // Listener là nguồn realtime; get() chỉ dùng để làm mới khi có dữ liệu.
+    let rows=freshMine;
+    const known=filterMine(watched.length?watched:cached);
+    if(st.role==='packer' && !freshMine.length && known.length){
+      rows=known;
+    }else if(!freshMine.length && fresh.length===0 && known.length){
+      rows=known;
+    }else if(!freshMine.length && fresh.length>0){
+      rows=known;
+    }
+    orderNotificationState.rows=rows.slice();
+    if(st.role==='packer')D.packingOrders=rows.slice();
+    else if(st.role==='admin')D.packingOrders=rows.slice();
+    localSaveOnly();
+    if(st.role==='admin')await renderAssignmentControls();
+    const pending=rows.filter(x=>x.status!=='completed').length;
+    const completed=rows.filter(x=>x.status==='completed').length;
+    updateOrderNotificationUI(pending,completed);
+    return rows;
+  }catch(e){
+    console.error('refreshOrdersForNotification',e);
+    // Không biến lỗi mạng/quyền thành “0 đơn”. Giữ dữ liệu listener/cache nếu còn.
+    let rows=filterMine(watched.length?watched:cached);
+    if(!rows.length && st.role==='packer')rows=restorePackerOrderCache(st.user.uid);
+    if(rows.length){
+      updateOrderNotificationUI(rows.filter(x=>x.status!=='completed').length,rows.filter(x=>x.status==='completed').length);
+      return rows;
+    }
+    toast('Không tải được đơn: '+(e?.message||e?.code||'Lỗi Cloud'));
+    return [];
+  }
+}
+
+function persistPackerOrderCache(rows,uid){
+  try{
+    if(!uid)return;
+    const safe=(Array.isArray(rows)?rows:[]).filter(x=>x&&String(x.assignedUid||'')===String(uid));
+    localStorage.setItem('ROLL_CAY_PACKER_ORDERS_'+String(uid),JSON.stringify(safe));
+  }catch(e){console.warn('persistPackerOrderCache',e)}
+}
+function restorePackerOrderCache(uid){
+  try{
+    if(!uid)return [];
+    const raw=localStorage.getItem('ROLL_CAY_PACKER_ORDERS_'+String(uid));
+    const rows=raw?JSON.parse(raw):[];
+    return Array.isArray(rows)?rows.filter(x=>x&&String(x.assignedUid||'')===String(uid)):[];
+  }catch(e){return []}
+}
+function activatePackerOrdersView(){
+  try{
+    hideLoginGate();
+    document.querySelectorAll('.bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='day'));
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.id==='day'));
+    const packForm=$('packForm'),inForm=$('inForm'),adminPanel=$('adminPackEntryPanel'),assignCard=$('orderAssignCard');
+    if(packForm){packForm.classList.remove('hidden');packForm.style.display='block'}
+    if(inForm){inForm.classList.add('hidden');inForm.style.display='none'}
+    if(adminPanel){adminPanel.classList.add('perm-hidden');adminPanel.style.display='none'}
+    if(assignCard){assignCard.classList.add('perm-hidden');assignCard.style.display='none'}
+    if($('modePack')){$('modePack').classList.add('hidden');$('modePack').style.display='none'}
+    if($('modeIn')){$('modeIn').classList.add('hidden');$('modeIn').style.display='none'}
+    if($('entryInfoPacker'))$('entryInfoPacker').classList.remove('hidden');
+    if($('packerOrderPanel')){$('packerOrderPanel').classList.remove('perm-hidden');$('packerOrderPanel').style.display='block'}
+    renderPackerOrders();
+    return true;
+  }catch(e){console.error('activatePackerOrdersView',e);toast('Không thể mở danh sách đơn. Đơn vẫn được giữ lại.');return false}
+}
+async function openOrderNotifications(){
+  // V24 ROOT FIX: the bell must NEVER be blocked by the transient Firebase Auth session gate.
+  // If the realtime listener already populated the bell (badge > 0), those rows are the
+  // authenticated user's canonical /packingOrders data. Open them immediately.
+  unlockOrderAlertAudio();
+  try{
+    let st=window.CloudSync?.state?.()||{};
+    const bellRole=String(orderNotificationState.role||st.role||'');
+    let rows=Array.isArray(orderNotificationState.rows)?orderNotificationState.rows.filter(Boolean):[];
+    if(!rows.length)rows=Array.isArray(D.packingOrders)?D.packingOrders.filter(Boolean):[];
+
+    // Listener-owned rows are already permission-scoped: packer rows were queried by assignedUid.
+    // Only filter when a concrete UID is available; never discard valid listener rows because
+    // firebase.auth().currentUser is temporarily null inside Android WebView.
+    const uid=String(st?.user?.uid||'');
+    if(bellRole==='packer'&&uid)rows=rows.filter(x=>String(x.assignedUid||'')===uid);
+
+    const pending=rows.filter(x=>x&&x.status!=='completed');
+    if(pending.length){
+      orderNotificationState.rows=rows.slice();
+      if(bellRole==='packer'&&uid)D.packingOrders=rows.slice();
+      showOrderAlert(pending.length,bellRole==='admin'?'admin':'packer',rows);
+      return;
+    }
+
+    // No cached rows: only now try a Firestore refresh. This is a data-load fallback,
+    // not an Auth gate for the bell.
+    let fresh=[];
+    try{fresh=await refreshOrdersForNotification()}catch(e){console.warn('bell refresh',e)}
+    const freshPending=(Array.isArray(fresh)?fresh:[]).filter(x=>x&&x.status!=='completed');
+    if(freshPending.length){
+      showOrderAlert(freshPending.length,bellRole==='admin'?'admin':'packer',fresh);
+      return;
+    }
+    toast('🔔 Hiện không có đơn nào đang chờ xử lý');
+  }catch(e){
+    console.error('openOrderNotifications',e);
+    // Never show the old misleading "Firebase session" error from the bell.
+    toast('Không thể mở danh sách đơn. Dữ liệu đơn vẫn được giữ nguyên.');
+  }
+}
+function closeOrderNotifications(){$('orderAlertModal')?.classList.remove('show')}
+async function openOrderFromAlert(id){
+  try{
+    const orderId=String(id||'').trim();if(!orderId){toast('Không xác định được đơn hàng');return}
+    const bellRole=String(orderNotificationState.role||'');
+    let rows=Array.isArray(orderNotificationState.rows)?orderNotificationState.rows.filter(Boolean):[];if(!rows.length)rows=Array.isArray(D.packingOrders)?D.packingOrders.filter(Boolean):[];
+    const target=rows.find(x=>String(x.id)===orderId);
+    if(bellRole==='packer'){
+      if(!target){toast('Đơn hàng không còn trong danh sách được phân công');return}
+      const uid=String(orderNotificationState.uid||'').trim();if(uid&&String(target.assignedUid||'')!==uid){toast('Đơn hàng không thuộc tài khoản hiện tại');return}
+      const mine=uid?rows.filter(x=>String(x.assignedUid||'')===uid):rows.slice();D.packingOrders=mine.slice();orderNotificationState.rows=mine.slice();if(uid)persistPackerOrderCache(mine,uid);
+      selectedOrderId=(target.status==='completed')?null:orderId;if(selectedOrderId)resetPackProof();hideLoginGate();closeOrderNotifications();activatePackerOrdersView();return;
+    }
+    toast('Tài khoản hiện tại chưa xác định quyền đóng hàng.');
+  }catch(e){console.error('openOrderFromAlert',e);toast('Không thể mở đơn. Dữ liệu đơn vẫn được giữ nguyên.')}
+}
+
+function goToPendingOrders(ev){
+  if(ev){ev.preventDefault();ev.stopPropagation()}
+  try{
+    const roleName=String(orderNotificationState.role||'');
+    let rows=Array.isArray(orderNotificationState.rows)?orderNotificationState.rows.filter(Boolean):[];if(!rows.length)rows=Array.isArray(D.packingOrders)?D.packingOrders.filter(Boolean):[];
+    if(roleName==='packer'){
+      const uid=String(orderNotificationState.uid||'').trim();if(uid)rows=rows.filter(x=>String(x.assignedUid||'')===uid);if(!rows.length&&uid)rows=restorePackerOrderCache(uid);
+      if(!rows.length){toast('🔔 Không tìm thấy dữ liệu đơn trên máy. Vui lòng chờ thông báo tải lại.');return false}
+      D.packingOrders=rows.slice();orderNotificationState.rows=rows.slice();if(uid)persistPackerOrderCache(rows,uid);
+      hideLoginGate();closeOrderNotifications();activatePackerOrdersView();return false;
+    }
+    if(roleName==='admin'){closeOrderNotifications();if(rows.length){D.packingOrders=rows.slice();renderAssignmentControls();go('day','pack');return false}}
+    toast('Tài khoản hiện tại chưa xác định là nhân viên đóng hàng.');
+  }catch(e){console.error('goToPendingOrders',e);toast('Không thể mở danh sách đơn. Dữ liệu đơn vẫn được giữ nguyên.')}
+  return false;
+}
+
+function maybeAlertForPending(pending,roleName,rows=[]){const key='ROLL_CAY_LAST_PENDING_'+notificationKey();const raw=localStorage.getItem(key);const previous=raw===null?null:Number(raw);localStorage.setItem(key,String(pending));if(previous!==null&&pending>previous){showOrderAlert(pending,roleName,rows);toast(`🔔 Có ${pending} đơn đang chờ đóng`)}else if(previous===null&&pending>0){showOrderAlert(pending,roleName,rows);toast(roleName==='admin'?`🔔 Có ${pending} đơn chưa hoàn tất`:`🔔 Bạn có ${pending} đơn cần đóng`)}}
+const CloudSync = (()=>{
+  let app=null,auth=null,db=null,user=null,pushTimer=null,ready=false,authReady=false,profile=null,orderUnsubs=[],initPromise=null,sessionEpoch=0;
+  const sharedRef=()=>db.collection('apps').doc('roll-cay-canh');
+  const configRef=()=>db.collection('config').doc('roll-cay-canh');
+  const packerEntriesRef=uid=>db.collection('packerRecords').doc(uid).collection('entries');
+  const ordersRef=()=>db.collection('packingOrders');
+  const profileRef=uid=>db.collection('users').doc(uid);
+  function setStatus(text,kind=''){const s=$('cloudStatus'),d=$('cloudDot'),b=$('syncBadge'),u=$('syncUser');if(s)s.textContent=text;if(d)d.className='cloud-dot '+kind;if(b)b.textContent=text;if(u)u.innerHTML=user?`Tài khoản: ${esc(user.email||'')} · <span class="role-pill">${esc(ROLE_LABELS[profile?.role]||'Đang kiểm tra quyền')}</span>`:'Đăng nhập để dùng chung dữ liệu trên nhiều điện thoại.'}
+  function available(){return !!(CLOUD_CONFIG&&CLOUD_CONFIG.apiKey&&CLOUD_CONFIG.projectId&&window.firebase)}
+  function currentAuthUser(){try{return auth?.currentUser||null}catch(e){return null}}
+  function sessionUsable(){const au=currentAuthUser();return !!(au&&user&&profile&&String(au.uid)===String(user.uid)&&profile.active!==false)}
+  async function ensureActionSession(timeoutMs=8000){
+    const deadline=Date.now()+Number(timeoutMs||8000);
+    try{if(!auth||!db){await init()}}catch(e){console.warn('init for action session',e)}
+    while(Date.now()<deadline){
+      // Sau khi onAuthStateChanged đã xác nhận tài khoản, biến `user` là session
