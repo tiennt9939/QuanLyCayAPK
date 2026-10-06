@@ -1,4 +1,5 @@
-// ROLL CAY CANH V20.6 — PUBLISH THIS FILE IN FIRESTORE RULES
+// ROLL CAY CANH V25.6.0 — COMPLETE FIX RELEASE
+// CHANGES: packSize >= 1 (was >= 2), add salaryAdvances collection, secure packer updates
 rules_version = '2';
 
 service cloud.firestore {
@@ -46,9 +47,9 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow create: if (isAdmin()
-        && request.resource.data.role in ['admin','manager','packer','warehouse','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua','viewer'])
+        && request.resource.data.role in ['admin','manager','packer','warehouse','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua','viewer']
         && (request.resource.data.role != 'admin' || (!('employeeId' in request.resource.data) && !('employeeName' in request.resource.data)))
-        && (request.resource.data.role !in ['packer','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua'] || (request.resource.data.employeeId is string && request.resource.data.employeeName is string))
+        && (request.resource.data.role !in ['packer','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua'] || (request.resource.data.employeeId is string && request.resource.data.employeeName is string)))
         || (signedIn() && request.auth.uid == uid && request.resource.data.role == 'viewer');
       allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
       allow update: if isAdmin() && (request.resource.data.role != 'admin' || (!('employeeId' in request.resource.data) && !('employeeName' in request.resource.data)));
@@ -59,22 +60,17 @@ service cloud.firestore {
       allow read, write: if isAdmin() && request.auth.uid == uid;
     }
 
-    // Dữ liệu tổng của kho/đóng hàng. Nhân viên đóng hàng KHÔNG được đọc.
-    // V25.4.3: Nhân viên thu mua được đọc/ghi document dùng chung vì catalog + đơn giá nằm trong data.catalog/data.rates.
     match /apps/{appId} {
       allow read: if isActiveUser() && (role() in ['admin','manager','warehouse','viewer'] || isProcurement());
       allow create, update: if isActiveUser() && (role() in ['admin','manager','warehouse'] || isProcurement() || isBootstrapAdmin());
       allow delete: if isAdmin();
     }
 
-    // Catalog + đơn giá tách quyền nghiệp vụ. Procurement được chỉnh catalog; các role khác chỉ đọc theo nghiệp vụ.
-    // Không chứa tồn kho, lịch sử hay dữ liệu nhân viên khác.
     match /config/{configId} {
       allow read: if isActiveUser();
       allow create, update: if isAdmin() || isProcurement();
       allow delete: if isAdmin() || isProcurement();
 
-      // Catalog được tách từng cây để Firestore không phải chứa hàng chục ảnh trong một document.
       match /plants/{plantId} {
         allow read: if isActiveUser();
         allow create, update: if isAdmin() || isProcurement();
@@ -82,7 +78,25 @@ service cloud.firestore {
       }
     }
 
-    // Đơn đóng hàng được Admin phân công cho từng tài khoản nhân viên.
+    // Salary advances: Admin only can create and update.
+    match /salaryAdvances/{advanceId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.employeeId is string
+        && request.resource.data.employee is string
+        && request.resource.data.date is string
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.createdAt == request.time;
+      allow update: if isAdmin()
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.employee == resource.data.employee
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isAdmin();
+    }
+
+    // Packing orders: V25.6.0 FIX — packSize >= 1 (not >= 2)
     function isPackerUid(uid) {
       return exists(/databases/$(database)/documents/users/$(uid))
         && get(/databases/$(database)/documents/users/$(uid)).data.role == 'packer'
@@ -90,11 +104,10 @@ service cloud.firestore {
     }
 
     match /packingOrders/{orderId} {
-      // Nhân viên chỉ đọc được đơn được giao cho chính mình; Admin đọc toàn bộ.
       allow read: if isAdmin()
         || (isActiveUser() && role() == 'packer' && resource.data.assignedUid == request.auth.uid);
 
-      // Chỉ Admin được tạo đơn; bắt buộc quy cách 2–100 cây/combo.
+      // FIX V25.6.0: packSize >= 1 ALLOWS 1 cây/order (was packSize >= 2)
       allow create: if isAdmin()
         && request.resource.data.assignedUid is string
         && isPackerUid(request.resource.data.assignedUid)
@@ -102,11 +115,11 @@ service cloud.firestore {
         && request.resource.data.plantName is string
         && request.resource.data.size is string
         && request.resource.data.packSize is number
-        && request.resource.data.packSize >= 2
+        && request.resource.data.packSize >= 1
         && request.resource.data.packSize <= 100
         && request.resource.data.status == 'pending';
 
-      // Nhân viên chỉ được chuyển đơn của mình từ pending -> completed và phải có ảnh.
+      // Packer can ONLY update completion fields, not financial/order fields.
       allow update: if isAdmin()
         || (
           isActiveUser()
@@ -134,8 +147,5 @@ service cloud.firestore {
 
       allow delete: if isAdmin();
     }
-
-    // V20: không còn vùng packerRecords cho nhân viên tự ghi số lượng.
-    // Tiền công chỉ phát sinh từ packingOrders đã hoàn thành kèm ảnh.
   }
 }
