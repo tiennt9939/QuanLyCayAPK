@@ -22,8 +22,7 @@ jobs:
           ZIP="$(find . -maxdepth 1 -type f -iname 'V2556*.zip' -print -quit)"
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: Không tìm thấy file ZIP V2556 ở thư mục gốc."
-            echo "Các file hiện có:"
+            echo "ERROR: Không tìm thấy ZIP V25.5.6 ở thư mục gốc."
             find . -maxdepth 1 -type f -printf '%f\n'
             exit 1
           fi
@@ -41,10 +40,7 @@ jobs:
 
           unzip -q "$ZIP" -d /tmp/v2556_source
 
-          echo "Extracted structure:"
-          find /tmp/v2556_source -maxdepth 3 -type f | head -100
-
-      - name: Locate project root
+      - name: Locate Android project root
         shell: bash
         run: |
           set -euo pipefail
@@ -61,11 +57,10 @@ jobs:
           if [ -z "$ROOT" ] || \
              [ ! -f "$ROOT/settings.gradle.kts" ] || \
              [ ! -f "$ROOT/build.gradle.kts" ]; then
-            echo "ERROR: Không tìm thấy Android project root hợp lệ."
+            echo "ERROR: Không tìm thấy Android project root."
             exit 1
           fi
 
-          echo "Project root: $ROOT"
           echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
 
       - name: Restore source into repository root
@@ -75,15 +70,16 @@ jobs:
 
           rsync -a --delete \
             --exclude='.git/' \
+            --exclude='.github/' \
             --exclude='V2556*.zip' \
             "$PROJECT_ROOT/" ./
 
           rm -f V2556*.zip
 
-          echo "Repository root after restore:"
+          echo "Repository root:"
           ls -la
 
-      - name: Verify V25.5.6 source
+      - name: Verify V25.5.6
         shell: bash
         run: |
           set -euo pipefail
@@ -91,13 +87,10 @@ jobs:
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f app/build.gradle.kts
-          test -f .github/workflows/build-apk.yml
 
           grep -q '25.5.6' app/build.gradle.kts
 
-          echo "================================"
           echo "V25.5.6 SOURCE RESTORE PASS"
-          echo "================================"
 
       - name: Commit restored source
         shell: bash
