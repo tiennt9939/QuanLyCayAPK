@@ -8,10 +8,10 @@ on:
       - ".github/workflows/sync-v26-from-zip.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: v26-sync-build
+  group: v26-build
   cancel-in-progress: false
 
 jobs:
@@ -20,25 +20,40 @@ jobs:
     timeout-minutes: 25
 
     steps:
+
+      # ============================================================
+      # 1. LẤY SOURCE HIỆN TẠI
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
+      # ============================================================
+      # 2. KIỂM TRA FILE ZIP V26
+      # ============================================================
       - name: Check V26 ZIP
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Checking V26 source ZIP..."
+
           test -f QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip
 
-          echo "V26 ZIP FOUND"
           ls -lh QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip
 
+          echo "V26 ZIP FOUND"
+
+      # ============================================================
+      # 3. GIẢI NÉN SOURCE V26
+      # ============================================================
       - name: Extract V26 source
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Extracting V26 source..."
 
           rm -rf /tmp/v26-source
           mkdir -p /tmp/v26-source
@@ -47,79 +62,94 @@ jobs:
             QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip \
             -d /tmp/v26-source
 
+          echo "Checking extracted source..."
+
           test -f /tmp/v26-source/app/build.gradle.kts
-          test -f /tmp/v26-source/app/src/main/assets/index.html
           test -f /tmp/v26-source/settings.gradle.kts
+          test -f /tmp/v26-source/build.gradle.kts
+          test -f /tmp/v26-source/app/src/main/assets/index.html
+          test -f /tmp/v26-source/app/src/main/java/com/quanlycay/apk/MainActivity.java
+          test -f /tmp/v26-source/tools/preflight.py
 
           echo "V26 SOURCE EXTRACTED"
 
-      - name: Replace repository source with V26
+      # ============================================================
+      # 4. THAY SOURCE TRONG WORKSPACE BẰNG V26
+      #    KHÔNG PUSH NGƯỢC LẠI GITHUB
+      # ============================================================
+      - name: Replace workspace with V26
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Replacing workspace source with V26..."
+
           rsync -a \
+            --delete \
             --exclude='.git/' \
             --exclude='QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip' \
             /tmp/v26-source/ ./
 
-          echo "V26 SOURCE INSTALLED"
+          echo "V26 SOURCE INSTALLED IN BUILD WORKSPACE"
 
-      - name: Verify V26 source BEFORE commit
+      # ============================================================
+      # 5. KIỂM TRA CỨNG V26 TRƯỚC KHI BUILD
+      # ============================================================
+      - name: Verify V26 source
         shell: bash
         run: |
           set -euo pipefail
 
-          grep -q 'versionName = "26.0.0"' app/build.gradle.kts
-          grep -q 'versionCode = 40' app/build.gradle.kts
+          echo "========================================"
+          echo "VERIFYING V26.0.0 SOURCE"
+          echo "========================================"
 
-          test -f app/src/main/assets/index.html
-          test -f app/src/main/java/com/quanlycay/apk/MainActivity.java
-          test -f tools/preflight.py
+          grep -q 'versionName = "26.0.0"' \
+            app/build.gradle.kts
 
-          COUNT=$(grep -c -E '^[[:space:]]*@JavascriptInterface[[:space:]]*$' \
+          grep -q 'versionCode = 40' \
+            app/build.gradle.kts
+
+          grep -q 'V26.0.0' \
+            app/src/main/assets/index.html
+
+          grep -q 'versionName = "26.0.0"' \
+            tools/preflight.py
+
+          COUNT=$(grep -c -E \
+            '^[[:space:]]*@JavascriptInterface[[:space:]]*$' \
             app/src/main/java/com/quanlycay/apk/MainActivity.java)
+
+          echo "VersionName: 26.0.0"
+          echo "VersionCode: 40"
+          echo "JavascriptInterface count: $COUNT"
 
           test "$COUNT" -eq 5
 
-          grep -q 'V26.0.0' app/src/main/assets/index.html
-          grep -q 'versionName = "26.0.0"' tools/preflight.py
+          echo "========================================"
+          echo "V26 SOURCE VERIFY PASS"
+          echo "========================================"
 
-          echo "================================"
-          echo "V26 SOURCE CHECK PASS"
-          echo "Version: 26.0.0"
-          echo "VersionCode: 40"
-          echo "JavascriptInterface: $COUNT"
-          echo "================================"
-
-      - name: Commit V26 source into main
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "No source changes to commit."
-          else
-            git commit -m "Release V26.0.0 stable source"
-            git push origin HEAD:main
-          fi
-
+      # ============================================================
+      # 6. JAVA 17
+      # ============================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # ============================================================
+      # 7. ANDROID SDK
+      # ============================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
 
+      # ============================================================
+      # 8. ANDROID SDK 35
+      # ============================================================
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -131,39 +161,163 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
+          echo "ANDROID SDK READY"
+
+      # ============================================================
+      # 9. GRADLE 8.13
+      # ============================================================
       - name: Setup Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
 
+      # ============================================================
+      # 10. PREFLIGHT V26
+      # ============================================================
       - name: Run V26 preflight
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "========================================"
+          echo "RUNNING V26 PREFLIGHT"
+          echo "========================================"
+
           python3 tools/preflight.py
 
-          COUNT=$(grep -c -E '^[[:space:]]*@JavascriptInterface[[:space:]]*$' \
+          COUNT=$(grep -c -E \
+            '^[[:space:]]*@JavascriptInterface[[:space:]]*$' \
             app/src/main/java/com/quanlycay/apk/MainActivity.java)
 
           test "$COUNT" -eq 5
 
-          grep -q 'versionName = "26.0.0"' app/build.gradle.kts
-          grep -q 'versionCode = 40' app/build.gradle.kts
+          grep -q 'versionName = "26.0.0"' \
+            app/build.gradle.kts
 
+          grep -q 'versionCode = 40' \
+            app/build.gradle.kts
+
+          echo "JavascriptInterface: $COUNT"
+          echo "Version: 26.0.0"
+          echo "VersionCode: 40"
+
+          echo "========================================"
           echo "V26 PREFLIGHT PASS"
+          echo "========================================"
 
+      # ============================================================
+      # 11. KIỂM TRA JAVASCRIPT
+      # ============================================================
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node --version
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+
+          html = Path(
+              'app/src/main/assets/index.html'
+          ).read_text(encoding='utf-8')
+
+          blocks = re.findall(
+              r'<script(?:\s[^>]*)?>(.*?)</script>',
+              html,
+              re.S | re.I
+          )
+
+          with tempfile.TemporaryDirectory() as td:
+              for i, block in enumerate(blocks):
+                  p = Path(td) / f'script_{i}.js'
+                  p.write_text(block, encoding='utf-8')
+                  subprocess.run(
+                      ['node', '--check', str(p)],
+                      check=True
+                  )
+
+          print(
+              f'JavaScript syntax PASS ({len(blocks)} blocks)'
+          )
+          PY
+
+      # ============================================================
+      # 12. BUILD APK V26
+      # ============================================================
       - name: Build V26 APK
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "========================================"
+          echo "BUILDING ROLL CAY CANH V26.0.0"
+          echo "========================================"
+
+          java -version
+
+          gradle --version
 
           gradle clean assembleDebug \
             --no-daemon \
             --stacktrace \
             --warning-mode all
 
-          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s \
+            app/build/outputs/apk/debug/app-debug.apk
 
-          echo "================================"
-          echo "V26 APK
+          echo "========================================"
+          echo "V26 APK BUILD PASS"
+          echo "========================================"
+
+          ls -lh \
+            app/build/outputs/apk/debug/app-debug.apk
+
+      # ============================================================
+      # 13. KIỂM TRA APK ĐƯỢC TẠO
+      # ============================================================
+      - name: Verify APK file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          test -f "$APK"
+          test -s "$APK"
+
+          echo "APK FOUND:"
+          ls -lh "$APK"
+
+          sha256sum "$APK"
+
+          echo "APK FILE VERIFY PASS"
+
+      # ============================================================
+      # 14. UPLOAD APK
+      # ============================================================
+      - name: Upload V26 APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyCayAPK-V26.0.0-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # ============================================================
+      # 15. UPLOAD LOG KHI BUILD LỖI
+      # ============================================================
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyCayAPK-V26.0.0-diagnostics
+          path: |
+            app/build/reports/**
+            app/build/outputs/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
