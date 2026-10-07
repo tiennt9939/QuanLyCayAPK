@@ -1,1 +1,169 @@
+name: SYNC SOURCE V26.0.0 AND BUILD APK
 
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip"
+      - ".github/workflows/sync-v26-from-zip.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v26-sync-build
+  cancel-in-progress: false
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check V26 ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip
+
+          echo "V26 ZIP FOUND"
+          ls -lh QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip
+
+      - name: Extract V26 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf /tmp/v26-source
+          mkdir -p /tmp/v26-source
+
+          unzip -q \
+            QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip \
+            -d /tmp/v26-source
+
+          test -f /tmp/v26-source/app/build.gradle.kts
+          test -f /tmp/v26-source/app/src/main/assets/index.html
+          test -f /tmp/v26-source/settings.gradle.kts
+
+          echo "V26 SOURCE EXTRACTED"
+
+      - name: Replace repository source with V26
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='QuanLyCayAPK-V26.0.0-SOURCE-ROOT.zip' \
+            /tmp/v26-source/ ./
+
+          echo "V26 SOURCE INSTALLED"
+
+      - name: Verify V26 source BEFORE commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          grep -q 'versionName = "26.0.0"' app/build.gradle.kts
+          grep -q 'versionCode = 40' app/build.gradle.kts
+
+          test -f app/src/main/assets/index.html
+          test -f app/src/main/java/com/quanlycay/apk/MainActivity.java
+          test -f tools/preflight.py
+
+          COUNT=$(grep -c -E '^[[:space:]]*@JavascriptInterface[[:space:]]*$' \
+            app/src/main/java/com/quanlycay/apk/MainActivity.java)
+
+          test "$COUNT" -eq 5
+
+          grep -q 'V26.0.0' app/src/main/assets/index.html
+          grep -q 'versionName = "26.0.0"' tools/preflight.py
+
+          echo "================================"
+          echo "V26 SOURCE CHECK PASS"
+          echo "Version: 26.0.0"
+          echo "VersionCode: 40"
+          echo "JavascriptInterface: $COUNT"
+          echo "================================"
+
+      - name: Commit V26 source into main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+          else
+            git commit -m "Release V26.0.0 stable source"
+            git push origin HEAD:main
+          fi
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Run V26 preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 tools/preflight.py
+
+          COUNT=$(grep -c -E '^[[:space:]]*@JavascriptInterface[[:space:]]*$' \
+            app/src/main/java/com/quanlycay/apk/MainActivity.java)
+
+          test "$COUNT" -eq 5
+
+          grep -q 'versionName = "26.0.0"' app/build.gradle.kts
+          grep -q 'versionCode = 40' app/build.gradle.kts
+
+          echo "V26 PREFLIGHT PASS"
+
+      - name: Build V26 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gradle clean assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all
+
+          test -s app/build/outputs/apk/debug/app-debug.apk
+
+          echo "================================"
+          echo "V26 APK
