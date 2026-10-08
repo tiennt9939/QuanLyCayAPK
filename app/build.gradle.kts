@@ -1,4 +1,6 @@
-plugins { id("com.android.application") }
+plugins {
+    id("com.android.application")
+}
 
 android {
     namespace = "com.quanlycay.apk"
@@ -8,7 +10,12 @@ android {
         applicationId = "com.quanlycay.apk"
         minSdk = 23
         targetSdk = 35
-        versionCode = 38
-        versionName = "25.6.3"
+
+        versionCode = 41
+        versionName = "26.0.1"
     }
+}
+
+dependencies {
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
