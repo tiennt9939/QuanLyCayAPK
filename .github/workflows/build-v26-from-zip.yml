@@ -1,4 +1,4 @@
-name: Build ROLL CAY CANH V26 Toolchain
+name: BUILD V26 TOOLCHAIN FROM SOURCE ZIP
 
 on:
   workflow_dispatch:
@@ -7,45 +7,197 @@ on:
     branches:
       - main
     paths:
-      - "app/**"
-      - "tools/**"
-      - "firestore.rules"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - ".github/workflows/build-apk.yml"
+      - "QuanLyCayAPK-V26.0.1-SHIPPING-OCR-DUPLICATE-GUARD-SOURCE-ROOT.zip"
+      - ".github/workflows/build-v26-from-zip.yml"
+      - "tools/preflight.py"
 
 permissions:
   contents: read
 
 concurrency:
-  group: roll-cay-canh-v26-build-${{ github.ref }}
+  group: quanlycay-v26-build
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-v26:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
 
-      # ============================================================
+      # =========================================================
       # 1. CHECKOUT
-      # ============================================================
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. VERIFY SOURCE STRUCTURE
-      # ============================================================
-      - name: Verify source structure
+      # =========================================================
+      # 2. CHECK V26.0.1 SOURCE ZIP
+      # =========================================================
+      - name: Check V26.0.1 source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="QuanLyCayAPK-V26.0.1-SHIPPING-OCR-DUPLICATE-GUARD-SOURCE-ROOT.zip"
+
+          echo "=========================================="
+          echo "CHECK V26.0.1 SOURCE ZIP"
+          echo "=========================================="
+
+          test -f "$ZIP"
+
+          ls -lh "$ZIP"
+
+          echo
+          echo "V26.0.1 SOURCE ZIP: PASS"
+
+      # =========================================================
+      # 3. EXTRACT V26.0.1 SOURCE
+      # =========================================================
+      - name: Extract V26.0.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="QuanLyCayAPK-V26.0.1-SHIPPING-OCR-DUPLICATE-GUARD-SOURCE-ROOT.zip"
+
+          rm -rf /tmp/v26-source
+          mkdir -p /tmp/v26-source
+
+          unzip -q "$ZIP" -d /tmp/v26-source
+
+          echo "Extracted source:"
+          find /tmp/v26-source -maxdepth 3 -type f | head -100
+
+      # =========================================================
+      # 4. LOCATE SOURCE ROOT
+      # =========================================================
+      - name: Locate V26 source root
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f "/tmp/v26-source/app/build.gradle.kts" ]; then
+            SOURCE_ROOT="/tmp/v26-source"
+
+          elif [ -f "/tmp/v26-source/QuanLyCayAPK/app/build.gradle.kts" ]; then
+            SOURCE_ROOT="/tmp/v26-source/QuanLyCayAPK"
+
+          else
+            echo "ERROR: app/build.gradle.kts not found in ZIP."
+
+            echo
+            echo "ZIP CONTENT:"
+            find /tmp/v26-source -maxdepth 5 -type f | sort
+
+            exit 1
+          fi
+
+          echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+
+          echo
+          echo "SOURCE ROOT:"
+          echo "$SOURCE_ROOT"
+
+      # =========================================================
+      # 5. INSTALL V26 SOURCE
+      #
+      # IMPORTANT:
+      # Do NOT overwrite repository workflow or preflight.
+      # These are controlled by GitHub repository.
+      # =========================================================
+      - name: Install V26.0.1 source into workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "${SOURCE_ROOT:-}"
+
+          echo "=========================================="
+          echo "INSTALL V26.0.1 SOURCE"
+          echo "=========================================="
+
+          rsync -a \
+            --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='tools/preflight.py' \
+            "$SOURCE_ROOT/" \
+            ./
+
+          echo
+          echo "V26 source installed."
+
+      # =========================================================
+      # 6. VERIFY REPOSITORY PREFLIGHT
+      # =========================================================
+      - name: Verify repository preflight
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "VERIFY SOURCE STRUCTURE"
+          echo "VERIFY REPOSITORY PREFLIGHT"
           echo "=========================================="
+
+          test -f tools/preflight.py
+
+          grep -q 'EXPECTED_VERSION_NAME = "26.0.1"' \
+            tools/preflight.py
+
+          grep -q 'EXPECTED_VERSION_CODE = 41' \
+            tools/preflight.py
+
+          echo
+          echo "Repository preflight: V26.0.1"
+          echo "Repository preflight integrity: PASS"
+
+      # =========================================================
+      # 7. VERIFY ACTUAL APP VERSION
+      # =========================================================
+      - name: Verify V26.0.1 application version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "VERIFY V26.0.1 APPLICATION"
+          echo "=========================================="
+
+          test -f app/build.gradle.kts
+
+          VERSION_NAME="$(
+            sed -nE \
+              's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+              app/build.gradle.kts | head -n 1
+          )"
+
+          VERSION_CODE="$(
+            sed -nE \
+              's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' \
+              app/build.gradle.kts | head -n 1
+          )"
+
+          echo "Detected versionName: $VERSION_NAME"
+          echo "Detected versionCode: $VERSION_CODE"
+
+          test "$VERSION_NAME" = "26.0.1"
+          test "$VERSION_CODE" = "41"
+
+          echo "APP_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+
+          echo
+          echo "V26.0.1 APPLICATION VERSION: PASS"
+
+      # =========================================================
+      # 8. VERIFY SOURCE STRUCTURE
+      # =========================================================
+      - name: Verify V26 source structure
+        shell: bash
+        run: |
+          set -euo pipefail
 
           test -f settings.gradle.kts
           test -f build.gradle.kts
@@ -62,59 +214,22 @@ jobs:
           test -f tools/preflight.py
           test -f firestore.rules
 
-          echo "Source structure: PASS"
+          echo "V26 source structure: PASS"
 
-      # ============================================================
-      # 3. READ APP VERSION
-      #    KHÔNG hard-code version vào workflow.
-      # ============================================================
-      - name: Read application version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          VERSION_NAME="$(
-            sed -nE \
-              's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
-              app/build.gradle.kts | head -n 1
-          )"
-
-          VERSION_CODE="$(
-            sed -nE \
-              's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' \
-              app/build.gradle.kts | head -n 1
-          )"
-
-          test -n "$VERSION_NAME"
-          test -n "$VERSION_CODE"
-
-          echo "APP_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
-          echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
-
-          echo "=========================================="
-          echo "APPLICATION VERSION"
-          echo "=========================================="
-          echo "versionName : $VERSION_NAME"
-          echo "versionCode : $VERSION_CODE"
-          echo "Build base  : V26 toolchain"
-          echo "=========================================="
-
-      # ============================================================
-      # 4. JAVA 17
-      # ============================================================
+      # =========================================================
+      # 9. JAVA 17
+      # =========================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ============================================================
-      # 5. ANDROID SDK
-      # ============================================================
+      # =========================================================
+      # 10. ANDROID SDK
+      # =========================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: platform-tools
 
       - name: Install Android SDK packages
         shell: bash
@@ -130,17 +245,17 @@ jobs:
 
           echo "Android SDK: PASS"
 
-      # ============================================================
-      # 6. GRADLE 8.13
-      # ============================================================
+      # =========================================================
+      # 11. GRADLE 8.13
+      # =========================================================
       - name: Setup Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
 
-      # ============================================================
-      # 7. TOOLCHAIN INFORMATION
-      # ============================================================
+      # =========================================================
+      # 12. VERIFY V26 TOOLCHAIN
+      # =========================================================
       - name: Verify V26 build toolchain
         shell: bash
         run: |
@@ -150,37 +265,32 @@ jobs:
           echo "V26 BUILD TOOLCHAIN"
           echo "=========================================="
 
+          echo
+          echo "JAVA:"
           java -version
+
           echo
+          echo "GRADLE:"
           gradle --version
+
           echo
+          echo "ANDROID SDK:"
           sdkmanager --list_installed | grep -E \
             'platform-tools|platforms;android-35|build-tools;35.0.0' || true
 
           echo
-          echo "V26 TOOLCHAIN READY"
+          echo "V26 TOOLCHAIN: PASS"
 
-      # ============================================================
-      # 8. AUTHORITATIVE PREFLIGHT
-      #
-      # preflight.py là nơi duy nhất kiểm tra:
-      # - version
-      # - JavascriptInterface
-      # - OCR
-      # - assignment
-      # - payroll
-      # - quote
-      # - printing
-      # - Firestore rules
-      # - combo
-      # ============================================================
+      # =========================================================
+      # 13. AUTHORITATIVE PREFLIGHT
+      # =========================================================
       - name: Static preflight
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "RUN AUTHORITATIVE PREFLIGHT"
+          echo "RUN V26.0.1 PREFLIGHT"
           echo "=========================================="
 
           python3 tools/preflight.py
@@ -188,9 +298,9 @@ jobs:
           echo
           echo "PREFLIGHT: PASS"
 
-      # ============================================================
-      # 9. JAVASCRIPT SYNTAX
-      # ============================================================
+      # =========================================================
+      # 14. JAVASCRIPT SYNTAX
+      # =========================================================
       - name: JavaScript syntax check
         shell: bash
         run: |
@@ -204,33 +314,40 @@ jobs:
           import subprocess
           import tempfile
 
-          path = Path("app/src/main/assets/index.html")
-          source = path.read_text(encoding="utf-8")
+          html = Path(
+              "app/src/main/assets/index.html"
+          ).read_text(
+              encoding="utf-8"
+          )
 
           blocks = re.findall(
-              r'<script(?:\s[^>]*)?>(.*?)</script>',
-              source,
+              r"<script(?:\s[^>]*)?>(.*?)</script>",
+              html,
               re.S | re.I
           )
 
-          print(f"JavaScript blocks: {len(blocks)}")
+          print("JavaScript blocks:", len(blocks))
 
           with tempfile.TemporaryDirectory() as td:
               for i, block in enumerate(blocks):
-                  js = Path(td) / f"script_{i}.js"
-                  js.write_text(block, encoding="utf-8")
+                  path = Path(td) / f"script_{i}.js"
+
+                  path.write_text(
+                      block,
+                      encoding="utf-8"
+                  )
 
                   subprocess.run(
-                      ["node", "--check", str(js)],
+                      ["node", "--check", str(path)],
                       check=True
                   )
 
           print("JavaScript syntax: PASS")
           PY
 
-      # ============================================================
-      # 10. FIRESTORE RULES SANITY CHECK
-      # ============================================================
+      # =========================================================
+      # 15. FIRESTORE RULES SANITY
+      # =========================================================
       - name: Firestore rules sanity check
         shell: bash
         run: |
@@ -243,25 +360,43 @@ jobs:
           test -s firestore.rules
 
           grep -q "rules_version = '2';" firestore.rules
-          grep -q "match /packingOrders/{orderId}" firestore.rules
-          grep -q "match /shipmentTrackingClaims/{trackingNo}" firestore.rules
-          grep -q "getAfter(" firestore.rules
-          grep -q "completionImages.size() == 2" firestore.rules
-          grep -q "packSize >= 1" firestore.rules
-          grep -q "packSize <= 100" firestore.rules
+
+          grep -q \
+            "match /packingOrders/{orderId}" \
+            firestore.rules
+
+          grep -q \
+            "match /shipmentTrackingClaims/{trackingNo}" \
+            firestore.rules
+
+          grep -q \
+            "getAfter(" \
+            firestore.rules
+
+          grep -q \
+            "packSize >= 1" \
+            firestore.rules
+
+          grep -q \
+            "packSize <= 100" \
+            firestore.rules
+
+          grep -q \
+            "completionImages.size() == 2" \
+            firestore.rules
 
           echo "Firestore rules sanity: PASS"
 
-      # ============================================================
-      # 11. BUILD DEBUG APK
-      # ============================================================
-      - name: Build debug APK
+      # =========================================================
+      # 16. BUILD DEBUG APK
+      # =========================================================
+      - name: Build V26.0.1 debug APK
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "BUILD APK"
+          echo "BUILD V26.0.1 APK"
           echo "=========================================="
 
           gradle clean assembleDebug \
@@ -277,9 +412,9 @@ jobs:
           echo "APK BUILD: PASS"
           ls -lh "$APK"
 
-      # ============================================================
-      # 12. VERIFY APK
-      # ============================================================
+      # =========================================================
+      # 17. VERIFY APK
+      # =========================================================
       - name: Verify APK output
         shell: bash
         run: |
@@ -288,56 +423,58 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           test -f "$APK"
-          test "$(stat -c%s "$APK")" -gt 100000
 
-          echo "APK:"
-          ls -lh "$APK"
+          SIZE="$(stat -c%s "$APK")"
 
-          echo
+          echo "APK size: $SIZE bytes"
+
+          test "$SIZE" -gt 100000
+
           echo "APK verification: PASS"
 
-      # ============================================================
-      # 13. UPLOAD APK
-      # ============================================================
-      - name: Upload APK
-        if: success()
+      # =========================================================
+      # 18. UPLOAD APK
+      # =========================================================
+      - name: Upload V26.0.1 APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuanLyCayAPK-V${{ env.APP_VERSION }}-V26-toolchain-debug
+          name: QuanLyCayAPK-V26.0.1-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
 
-      # ============================================================
-      # 14. BUILD SUMMARY
-      # ============================================================
+      # =========================================================
+      # 19. BUILD SUMMARY
+      # =========================================================
       - name: Build summary
         if: success()
         shell: bash
         run: |
           echo "=========================================="
-          echo "BUILD SUCCESS"
+          echo "V26.0.1 BUILD SUCCESS"
           echo "=========================================="
+
           echo "App version : V${APP_VERSION}"
           echo "Version code: ${APP_VERSION_CODE}"
+
           echo "Toolchain   : V26"
           echo "Java        : 17"
           echo "Android SDK : 35"
           echo "Build tools : 35.0.0"
           echo "Gradle      : 8.13"
+
           echo "=========================================="
 
-      # ============================================================
-      # 15. DIAGNOSTICS
-      # ============================================================
+      # =========================================================
+      # 20. DIAGNOSTICS
+      # =========================================================
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: QuanLyCayAPK-V${{ env.APP_VERSION || 'unknown' }}-V26-build-diagnostics
+          name: QuanLyCayAPK-V26.0.1-build-diagnostics
           path: |
-            app/build/outputs/**/*.log
             app/build/reports/**
-            app/build/outputs/apk/debug/**
+            app/build/outputs/**
           if-no-files-found: ignore
           retention-days: 7
