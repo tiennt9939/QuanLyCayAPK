@@ -8,6 +8,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function validShipmentTracking(t) {
+      return t is string
+        && t.size() >= 5
+        && t.size() <= 80;
+    }
+
     function isBootstrapAdmin() {
       return signedIn() && request.auth.token.email != null
         && request.auth.token.email.lower() == 'tiennt9939@gmail.com';
@@ -37,67 +43,186 @@ service cloud.firestore {
     }
 
     function isProcurement() {
-      return isActiveUser() && role() in ['procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua'];
+      return isActiveUser() && role() in [
+        'procurement',
+        'purchaser',
+        'purchasing',
+        'purchasing_staff',
+        'procurement_staff',
+        'thu_mua',
+        'nhan_vien_thu_mua'
+      ];
     }
 
     function canWriteData() {
-      return isActiveUser() && role() in ['admin', 'manager', 'packer', 'warehouse'];
+      return isActiveUser() && role() in [
+        'admin',
+        'manager',
+        'packer',
+        'warehouse'
+      ];
     }
 
     match /users/{uid} {
-      allow create: if (isAdmin()
-        && request.resource.data.role in ['admin','manager','packer','warehouse','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua','viewer'])
-        && (request.resource.data.role != 'admin' || (!('employeeId' in request.resource.data) && !('employeeName' in request.resource.data)))
-        && (request.resource.data.role !in ['packer','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua'] || (request.resource.data.employeeId is string && request.resource.data.employeeName is string))
-        || (signedIn() && request.auth.uid == uid && request.resource.data.role == 'viewer');
-      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow update: if isAdmin() && (request.resource.data.role != 'admin' || (!('employeeId' in request.resource.data) && !('employeeName' in request.resource.data)));
+
+      allow create: if (
+        isAdmin()
+        && request.resource.data.role in [
+          'admin',
+          'manager',
+          'packer',
+          'warehouse',
+          'procurement',
+          'purchaser',
+          'purchasing',
+          'purchasing_staff',
+          'procurement_staff',
+          'thu_mua',
+          'nhan_vien_thu_mua',
+          'viewer'
+        ]
+        && (
+          request.resource.data.role != 'admin'
+          || (
+            !('employeeId' in request.resource.data)
+            && !('employeeName' in request.resource.data)
+          )
+        )
+        && (
+          request.resource.data.role !in [
+            'packer',
+            'procurement',
+            'purchaser',
+            'purchasing',
+            'purchasing_staff',
+            'procurement_staff',
+            'thu_mua',
+            'nhan_vien_thu_mua'
+          ]
+          || (
+            request.resource.data.employeeId is string
+            && request.resource.data.employeeName is string
+          )
+        )
+      )
+      || (
+        signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'viewer'
+      );
+
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+        );
+
+      allow update: if isAdmin()
+        && (
+          request.resource.data.role != 'admin'
+          || (
+            !('employeeId' in request.resource.data)
+            && !('employeeName' in request.resource.data)
+          )
+        );
+
       allow delete: if isAdmin();
     }
 
     match /users/{uid}/apps/{appId} {
-      allow read, write: if isAdmin() && request.auth.uid == uid;
+      allow read, write: if isAdmin()
+        && request.auth.uid == uid;
     }
 
-    // Dữ liệu tổng của kho/đóng hàng. Nhân viên đóng hàng KHÔNG được đọc.
-    // V25.4.3: Nhân viên thu mua được đọc/ghi document dùng chung vì catalog + đơn giá nằm trong data.catalog/data.rates.
+    // Dữ liệu tổng của kho/đóng hàng.
+    // Nhân viên đóng hàng KHÔNG được đọc.
+    // V25.4.3: Nhân viên thu mua được đọc/ghi document dùng chung
+    // vì catalog + đơn giá nằm trong data.catalog/data.rates.
     match /apps/{appId} {
-      allow read: if isActiveUser() && (role() in ['admin','manager','warehouse','viewer'] || isProcurement());
-      allow create, update: if isActiveUser() && (role() in ['admin','manager','warehouse'] || isProcurement() || isBootstrapAdmin());
+
+      allow read: if isActiveUser()
+        && (
+          role() in [
+            'admin',
+            'manager',
+            'warehouse',
+            'viewer'
+          ]
+          || isProcurement()
+        );
+
+      allow create, update: if isActiveUser()
+        && (
+          role() in [
+            'admin',
+            'manager',
+            'warehouse'
+          ]
+          || isProcurement()
+          || isBootstrapAdmin()
+        );
+
       allow delete: if isAdmin();
     }
 
-    // Catalog + đơn giá tách quyền nghiệp vụ. Procurement được chỉnh catalog; các role khác chỉ đọc theo nghiệp vụ.
-    // Không chứa tồn kho, lịch sử hay dữ liệu nhân viên khác.
+    // Catalog + đơn giá tách quyền nghiệp vụ.
+    // Procurement được chỉnh catalog.
+    // Các role khác chỉ đọc theo nghiệp vụ.
     match /config/{configId} {
-      allow read: if isActiveUser();
-      allow create, update: if isAdmin() || isProcurement();
-      allow delete: if isAdmin() || isProcurement();
 
-      // Catalog được tách từng cây để Firestore không phải chứa hàng chục ảnh trong một document.
+      allow read: if isActiveUser();
+
+      allow create, update:
+        if isAdmin() || isProcurement();
+
+      allow delete:
+        if isAdmin() || isProcurement();
+
+      // Catalog được tách từng cây để Firestore không phải
+      // chứa hàng chục ảnh trong một document.
       match /plants/{plantId} {
+
         allow read: if isActiveUser();
-        allow create, update: if isAdmin() || isProcurement();
-        allow delete: if isAdmin() || isProcurement();
+
+        allow create, update:
+          if isAdmin() || isProcurement();
+
+        allow delete:
+          if isAdmin() || isProcurement();
       }
     }
 
     // Đơn đóng hàng được Admin phân công cho từng tài khoản nhân viên.
     function isPackerUid(uid) {
-      return exists(/databases/$(database)/documents/users/$(uid))
-        && get(/databases/$(database)/documents/users/$(uid)).data.role == 'packer'
-        && get(/databases/$(database)/documents/users/$(uid)).data.active != false;
+      return exists(
+        /databases/$(database)/documents/users/$(uid)
+      )
+      && get(
+        /databases/$(database)/documents/users/$(uid)
+      ).data.role == 'packer'
+      && get(
+        /databases/$(database)/documents/users/$(uid)
+      ).data.active != false;
     }
 
     match /packingOrders/{orderId} {
-      // Nhân viên chỉ đọc được đơn được giao cho chính mình; Admin đọc toàn bộ.
-      allow read: if isAdmin()
-        || (isActiveUser() && role() == 'packer' && resource.data.assignedUid == request.auth.uid);
 
-      // Chỉ Admin được tạo đơn; quy cách thực tế của mỗi đơn từ 1–100 cây.
+      // Nhân viên chỉ đọc được đơn được giao cho chính mình;
+      // Admin đọc toàn bộ.
+      allow read: if isAdmin()
+        || (
+          isActiveUser()
+          && role() == 'packer'
+          && resource.data.assignedUid == request.auth.uid
+        );
+
+      // Chỉ Admin được tạo đơn.
+      // Quy cách thực tế của mỗi đơn từ 1–100 cây.
       allow create: if isAdmin()
         && request.resource.data.assignedUid is string
-        && isPackerUid(request.resource.data.assignedUid)
+        && isPackerUid(
+          request.resource.data.assignedUid
+        )
         && request.resource.data.employee is string
         && request.resource.data.plantName is string
         && request.resource.data.size is string
@@ -106,36 +231,21 @@ service cloud.firestore {
         && request.resource.data.packSize <= 100
         && request.resource.data.status == 'pending';
 
-      // Nhân viên chỉ được chuyển đơn của mình từ pending -> completed và phải có ảnh.
+      // Nhân viên chỉ được chuyển đơn của mình
+      // từ pending -> completed và phải có ảnh.
       allow update: if isAdmin()
         || (
           isActiveUser()
           && role() == 'packer'
           && resource.data.assignedUid == request.auth.uid
           && resource.data.status == 'pending'
-          && request.resource.data.assignedUid == resource.data.assignedUid
-          && request.resource.data.employee == resource.data.employee
-          && request.resource.data.plantIndex == resource.data.plantIndex
-          && request.resource.data.plantName == resource.data.plantName
-          && request.resource.data.size == resource.data.size
-          && request.resource.data.packSize == resource.data.packSize
-          && request.resource.data.status == 'completed'
-          && request.resource.data.completionImage is string
-          && request.resource.data.completionImage.size() > 0
-          && request.resource.data.completionImages is list
-          && request.resource.data.completionImages.size() == 2
-          && request.resource.data.completionImages[0] is string
-          && request.resource.data.completionImages[1] is string
-          && request.resource.data.completionImages[0].size() > 0
-          && request.resource.data.completionImages[1].size() > 0
-          && request.resource.data.completedBy == request.auth.uid
-          && request.resource.data.completedAt == request.time
-        );
-
-      allow delete: if isAdmin();
-    }
-
-    // V20: không còn vùng packerRecords cho nhân viên tự ghi số lượng.
-    // Tiền công chỉ phát sinh từ packingOrders đã hoàn thành kèm ảnh.
-  }
-}
+          && request.resource.data.assignedUid
+            == resource.data.assignedUid
+          && request.resource.data.employee
+            == resource.data.employee
+          && request.resource.data.plantIndex
+            == resource.data.plantIndex
+          && request.resource.data.plantName
+            == resource.data.plantName
+          && request.resource.data.size
+            == resource
