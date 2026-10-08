@@ -293,22 +293,37 @@ public class MainActivity extends Activity {
     private class ReleaseAfterPrintAdapter extends PrintDocumentAdapter {
         private final PrintDocumentAdapter delegate;
         private final WebView printView;
+
         ReleaseAfterPrintAdapter(PrintDocumentAdapter delegate, WebView printView) {
             this.delegate = delegate;
             this.printView = printView;
         }
-        @Override public void onStart() { delegate.onStart(); }
-        @Override public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
-                                       android.os.CancellationSignal cancellationSignal,
-                                       LayoutResultCallback callback, Bundle extras) {
+
+        @Override public void onStart() {
+            delegate.onStart();
+        }
+
+        @Override
+        public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
+                              android.os.CancellationSignal cancellationSignal,
+                              LayoutResultCallback callback, Bundle extras) {
             delegate.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras);
         }
-        @Override public void onWrite(android.print.PageRange[] pages, android.os.ParcelFileDescriptor destination,
-                                      android.os.CancellationSignal cancellationSignal, WriteResultCallback callback) {
+
+        @Override
+        public void onWrite(android.print.PageRange[] pages,
+                             android.os.ParcelFileDescriptor destination,
+                             android.os.CancellationSignal cancellationSignal,
+                             WriteResultCallback callback) {
             delegate.onWrite(pages, destination, cancellationSignal, callback);
         }
+
         @Override public void onFinish() {
-            try { delegate.onFinish(); } finally { cleanupPrintWebView(printView); }
+            try {
+                delegate.onFinish();
+            } finally {
+                cleanupPrintWebView(printView);
+            }
         }
     }
 
@@ -350,6 +365,7 @@ public class MainActivity extends Activity {
             try {
                 PrintManager printManager =
                         (PrintManager) getSystemService(Context.PRINT_SERVICE);
+
                 if (printManager == null) {
                     cleanupPrintWebView(printView);
                     Toast.makeText(MainActivity.this,
@@ -359,6 +375,7 @@ public class MainActivity extends Activity {
 
                 PrintDocumentAdapter adapter =
                         printView.createPrintDocumentAdapter(safeName);
+
                 if (adapter == null) {
                     cleanupPrintWebView(printView);
                     Toast.makeText(MainActivity.this,
@@ -395,7 +412,9 @@ public class MainActivity extends Activity {
         );
 
         mainHandler.postDelayed(
-                () -> { if (!started[0]) startPrint.run(); },
+                () -> {
+                    if (!started[0]) startPrint.run();
+                },
                 3500
         );
 
@@ -413,139 +432,498 @@ public class MainActivity extends Activity {
     }
 
     private void savePdfToDownloads(String jobName, File tmp) throws Exception {
-        String name=(jobName==null||jobName.trim().isEmpty()?"Bao-gia-ROLL-GARDEN":jobName).replaceAll("[^a-zA-Z0-9._-]","_");
-        if(!name.toLowerCase().endsWith(".pdf"))name+=".pdf";
-        if(Build.VERSION.SDK_INT>=29){
-            ContentValues values=new ContentValues(); values.put(MediaStore.Downloads.DISPLAY_NAME,name); values.put(MediaStore.Downloads.MIME_TYPE,"application/pdf"); values.put(MediaStore.Downloads.RELATIVE_PATH,Environment.DIRECTORY_DOWNLOADS+"/ROLL CAY CANH"); values.put(MediaStore.Downloads.IS_PENDING,1);
-            Uri uri=getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values); if(uri==null)throw new Exception("Không tạo được file trong Tải xuống");
-            try(InputStream in=new FileInputStream(tmp); OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new Exception("Không mở được file đích"); byte[] buf=new byte[8192]; int n; while((n=in.read(buf))>0)out.write(buf,0,n);}
-            ContentValues done=new ContentValues(); done.put(MediaStore.Downloads.IS_PENDING,0); getContentResolver().update(uri,done,null,null);
-        } else {File dir=Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);if(!dir.exists()&&!dir.mkdirs())throw new Exception("Không tạo được thư mục Tải xuống");try(FileInputStream in=new FileInputStream(tmp);FileOutputStream out=new FileOutputStream(new File(dir,name))){byte[] buf=new byte[8192];int n;while((n=in.read(buf))>0)out.write(buf,0,n);}}
-        Toast.makeText(this,"✅ Đã xuất PDF: Tải xuống / ROLL CAY CANH / "+name,Toast.LENGTH_LONG).show();
-        if(webView!=null)webView.evaluateJavascript("window.finishQuotePdfExport&&window.finishQuotePdfExport(true)",null);
+        String name = (jobName == null || jobName.trim().isEmpty()
+                ? "Bao-gia-ROLL-GARDEN"
+                : jobName).replaceAll("[^a-zA-Z0-9._-]", "_");
+
+        if (!name.toLowerCase().endsWith(".pdf")) name += ".pdf";
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+            values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+            values.put(MediaStore.Downloads.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOWNLOADS + "/ROLL CAY CANH");
+            values.put(MediaStore.Downloads.IS_PENDING, 1);
+
+            Uri uri = getContentResolver().insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    values);
+
+            if (uri == null) {
+                throw new Exception("Không tạo được file trong Tải xuống");
+            }
+
+            try (InputStream in = new FileInputStream(tmp);
+                 OutputStream out = getContentResolver().openOutputStream(uri)) {
+
+                if (out == null) {
+                    throw new Exception("Không mở được file đích");
+                }
+
+                byte[] buf = new byte[8192];
+                int n;
+
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                }
+            }
+
+            ContentValues done = new ContentValues();
+            done.put(MediaStore.Downloads.IS_PENDING, 0);
+            getContentResolver().update(uri, done, null, null);
+
+        } else {
+            File dir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS);
+
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw new Exception("Không tạo được thư mục Tải xuống");
+            }
+
+            try (FileInputStream in = new FileInputStream(tmp);
+                 FileOutputStream out = new FileOutputStream(new File(dir, name))) {
+
+                byte[] buf = new byte[8192];
+                int n;
+
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                }
+            }
+        }
+
+        Toast.makeText(
+                this,
+                "✅ Đã xuất PDF: Tải xuống / ROLL CAY CANH / " + name,
+                Toast.LENGTH_LONG
+        ).show();
+
+        if (webView != null) {
+            webView.evaluateJavascript(
+                    "window.finishQuotePdfExport&&window.finishQuotePdfExport(true)",
+                    null
+            );
+        }
     }
+
     public class AndroidBridge {
+
         @JavascriptInterface
         public void printA4Page(String jobName) {
-            final String safeName = (jobName == null || jobName.trim().isEmpty())
-                    ? "ROLL-CAY-CANH-BAO-GIA"
-                    : jobName.replaceAll("[^a-zA-Z0-9._-]", "_");
+            final String safeName =
+                    (jobName == null || jobName.trim().isEmpty())
+                            ? "ROLL-CAY-CANH-BAO-GIA"
+                            : jobName.replaceAll("[^a-zA-Z0-9._-]", "_");
+
             final boolean orderLabel = safeName.startsWith("ROLL-CAY-CANH-");
+
             runOnUiThread(() -> {
                 try {
                     if (webView == null) {
-                        Toast.makeText(MainActivity.this, "WebView chưa sẵn sàng", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(
+                                MainActivity.this,
+                                "WebView chưa sẵn sàng",
+                                Toast.LENGTH_SHORT
+                        ).show();
                         return;
                     }
-                    final PrintAttributes attributes = buildPrintAttributes(orderLabel);
-                    webView.evaluateJavascript(CAPTURE_PRINT_HTML_JS, raw -> {
-                        try {
-                            final String html = sanitizePrintHtml(decodeJavascriptString(raw));
-                            startIsolatedPrint(safeName, html, attributes);
-                        } catch (Exception e) {
-                            Toast.makeText(MainActivity.this, "Không chuẩn bị được nội dung in: " + safeError(e), Toast.LENGTH_LONG).show();
-                        }
-                    });
+
+                    final PrintAttributes attributes =
+                            buildPrintAttributes(orderLabel);
+
+                    webView.evaluateJavascript(
+                            CAPTURE_PRINT_HTML_JS,
+                            raw -> {
+                                try {
+                                    final String html =
+                                            sanitizePrintHtml(
+                                                    decodeJavascriptString(raw)
+                                            );
+
+                                    startIsolatedPrint(
+                                            safeName,
+                                            html,
+                                            attributes
+                                    );
+                                } catch (Exception e) {
+                                    Toast.makeText(
+                                            MainActivity.this,
+                                            "Không chuẩn bị được nội dung in: "
+                                                    + safeError(e),
+                                            Toast.LENGTH_LONG
+                                    ).show();
+                                }
+                            }
+                    );
+
                 } catch (Throwable e) {
-                    Toast.makeText(MainActivity.this, "Không thể mở chức năng in: " + safeError(e), Toast.LENGTH_LONG).show();
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Không thể mở chức năng in: "
+                                    + safeError(e),
+                            Toast.LENGTH_LONG
+                    ).show();
                 }
             });
         }
 
         @JavascriptInterface
         public void printOrder65x100(String jobName) {
-            final String safeName=(jobName==null||jobName.trim().isEmpty()?"ROLL-CAY-CANH-ORDER-65X100":jobName).replaceAll("[^a-zA-Z0-9._-]","_");
-            runOnUiThread(()->{if(webView==null){Toast.makeText(MainActivity.this,"WebView chưa sẵn sàng",Toast.LENGTH_SHORT).show();return;} webView.evaluateJavascript(CAPTURE_PRINT_HTML_JS,raw->{try{startIsolatedPrint(safeName,sanitizePrintHtml(decodeJavascriptString(raw)),buildPrintAttributes(true));}catch(Exception e){Toast.makeText(MainActivity.this,"Không chuẩn bị được đơn in: "+safeError(e),Toast.LENGTH_LONG).show();}});});
+            final String safeName =
+                    (jobName == null || jobName.trim().isEmpty()
+                            ? "ROLL-CAY-CANH-ORDER-65X100"
+                            : jobName)
+                            .replaceAll("[^a-zA-Z0-9._-]", "_");
+
+            runOnUiThread(() -> {
+                if (webView == null) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "WebView chưa sẵn sàng",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                    return;
+                }
+
+                webView.evaluateJavascript(
+                        CAPTURE_PRINT_HTML_JS,
+                        raw -> {
+                            try {
+                                startIsolatedPrint(
+                                        safeName,
+                                        sanitizePrintHtml(
+                                                decodeJavascriptString(raw)
+                                        ),
+                                        buildPrintAttributes(true)
+                                );
+                            } catch (Exception e) {
+                                Toast.makeText(
+                                        MainActivity.this,
+                                        "Không chuẩn bị được đơn in: "
+                                                + safeError(e),
+                                        Toast.LENGTH_LONG
+                                ).show();
+                            }
+                        }
+                );
+            });
+        }
+
+        /*
+         * Interface #3
+         * Native bridge cho OCR nhãn vận chuyển.
+         */
+        @JavascriptInterface
+        public void ocrShippingImage(String imageData) {
+            final boolean hasImage =
+                    imageData != null
+                            && !imageData.trim().isEmpty();
+
+            runOnUiThread(() ->
+                    Toast.makeText(
+                            MainActivity.this,
+                            hasImage
+                                    ? "📷 Đã nhận ảnh OCR"
+                                    : "⚠️ Ảnh OCR rỗng",
+                            Toast.LENGTH_SHORT
+                    ).show()
+            );
+        }
+
+        /*
+         * Interface #4
+         * Native bridge dành cho FlashLabel.
+         */
+        @JavascriptInterface
+        public void sendToFlashLabel(String payload) {
+            final boolean hasPayload =
+                    payload != null
+                            && !payload.trim().isEmpty();
+
+            runOnUiThread(() ->
+                    Toast.makeText(
+                            MainActivity.this,
+                            hasPayload
+                                    ? "🖨️ Đã nhận dữ liệu FlashLabel"
+                                    : "⚠️ Dữ liệu FlashLabel rỗng",
+                            Toast.LENGTH_SHORT
+                    ).show()
+            );
         }
 
         @JavascriptInterface
         public void exportPdf(String jobName) {
-            final String safeName=(jobName==null||jobName.trim().isEmpty()?"Bao-gia-ROLL-GARDEN":jobName).replaceAll("[^a-zA-Z0-9._-]","_");
-            runOnUiThread(()->{if(webView==null){Toast.makeText(MainActivity.this,"WebView chưa sẵn sàng",Toast.LENGTH_SHORT).show();return;} webView.evaluateJavascript(CAPTURE_PRINT_HTML_JS,raw->{try{startPdfExport(safeName,sanitizePrintHtml(decodeJavascriptString(raw)));}catch(Exception e){Toast.makeText(MainActivity.this,"Không chuẩn bị được PDF: "+safeError(e),Toast.LENGTH_LONG).show();}});});
-        }
+            final String safeName =
+                    (jobName == null || jobName.trim().isEmpty()
+                            ? "Bao-gia-ROLL-GARDEN"
+                            : jobName)
+                            .replaceAll("[^a-zA-Z0-9._-]", "_");
 
-        public void printCurrentPage(String jobName) {
-            final String safeName = (jobName == null || jobName.trim().isEmpty())
-                    ? "ROLL-CAY-CANH"
-                    : jobName.replaceAll("[^a-zA-Z0-9._-]", "_");
             runOnUiThread(() -> {
                 if (webView == null) {
-                    Toast.makeText(MainActivity.this, "WebView chưa sẵn sàng", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(
+                            MainActivity.this,
+                            "WebView chưa sẵn sàng",
+                            Toast.LENGTH_SHORT
+                    ).show();
                     return;
                 }
-                final PrintAttributes attributes = buildPrintAttributes(false);
-                webView.evaluateJavascript(CAPTURE_PRINT_HTML_JS, raw -> {
-                    try {
-                        final String html = sanitizePrintHtml(decodeJavascriptString(raw));
-                        startIsolatedPrint(safeName, html, attributes);
-                    } catch (Exception e) {
-                        Toast.makeText(MainActivity.this, "Không chuẩn bị được nội dung in: " + safeError(e), Toast.LENGTH_LONG).show();
-                    }
-                });
+
+                webView.evaluateJavascript(
+                        CAPTURE_PRINT_HTML_JS,
+                        raw -> {
+                            try {
+                                startPdfExport(
+                                        safeName,
+                                        sanitizePrintHtml(
+                                                decodeJavascriptString(raw)
+                                        )
+                                );
+                            } catch (Exception e) {
+                                Toast.makeText(
+                                        MainActivity.this,
+                                        "Không chuẩn bị được PDF: "
+                                                + safeError(e),
+                                        Toast.LENGTH_LONG
+                                ).show();
+                            }
+                        }
+                );
             });
         }
 
-        public boolean saveFile(String filename, String base64, String mimeType) {
+        public void printCurrentPage(String jobName) {
+            final String safeName =
+                    (jobName == null || jobName.trim().isEmpty())
+                            ? "ROLL-CAY-CANH"
+                            : jobName.replaceAll(
+                                    "[^a-zA-Z0-9._-]",
+                                    "_"
+                            );
+
+            runOnUiThread(() -> {
+                if (webView == null) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "WebView chưa sẵn sàng",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                    return;
+                }
+
+                final PrintAttributes attributes =
+                        buildPrintAttributes(false);
+
+                webView.evaluateJavascript(
+                        CAPTURE_PRINT_HTML_JS,
+                        raw -> {
+                            try {
+                                final String html =
+                                        sanitizePrintHtml(
+                                                decodeJavascriptString(raw)
+                                        );
+
+                                startIsolatedPrint(
+                                        safeName,
+                                        html,
+                                        attributes
+                                );
+                            } catch (Exception e) {
+                                Toast.makeText(
+                                        MainActivity.this,
+                                        "Không chuẩn bị được nội dung in: "
+                                                + safeError(e),
+                                        Toast.LENGTH_LONG
+                                ).show();
+                            }
+                        }
+                );
+            });
+        }
+
+        public boolean saveFile(
+                String filename,
+                String base64,
+                String mimeType
+        ) {
             try {
-                String safeName = filename == null ? "bao-cao.csv" : filename.replaceAll("[^a-zA-Z0-9._-]", "_");
-                if (!safeName.toLowerCase().endsWith(".csv")) safeName = safeName + ".csv";
+                String safeName =
+                        filename == null
+                                ? "bao-cao.csv"
+                                : filename.replaceAll(
+                                        "[^a-zA-Z0-9._-]",
+                                        "_"
+                                );
+
+                if (!safeName.toLowerCase().endsWith(".csv")) {
+                    safeName += ".csv";
+                }
+
                 final String outputName = safeName;
-                byte[] bytes = Base64.decode(base64 == null ? "" : base64, Base64.DEFAULT);
-                if (bytes.length == 0) throw new Exception("Nội dung file rỗng");
+
+                byte[] bytes = Base64.decode(
+                        base64 == null ? "" : base64,
+                        Base64.DEFAULT
+                );
+
+                if (bytes.length == 0) {
+                    throw new Exception("Nội dung file rỗng");
+                }
 
                 if (Build.VERSION.SDK_INT >= 29) {
+
                     ContentValues values = new ContentValues();
-                    values.put(MediaStore.Downloads.DISPLAY_NAME, outputName);
-                    values.put(MediaStore.Downloads.MIME_TYPE,
-                            mimeType == null ? "text/csv" : mimeType);
-                    values.put(MediaStore.Downloads.RELATIVE_PATH,
-                            Environment.DIRECTORY_DOWNLOADS + "/ROLL CAY CANH");
-                    values.put(MediaStore.Downloads.IS_PENDING, 1);
-                    Uri uri = getContentResolver().insert(
-                            MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                    if (uri == null) throw new Exception("Không tạo được file trong Tải xuống");
-                    try (OutputStream out = getContentResolver().openOutputStream(uri)) {
-                        if (out == null) throw new Exception("Không mở được file đích");
+
+                    values.put(
+                            MediaStore.Downloads.DISPLAY_NAME,
+                            outputName
+                    );
+
+                    values.put(
+                            MediaStore.Downloads.MIME_TYPE,
+                            mimeType == null
+                                    ? "text/csv"
+                                    : mimeType
+                    );
+
+                    values.put(
+                            MediaStore.Downloads.RELATIVE_PATH,
+                            Environment.DIRECTORY_DOWNLOADS
+                                    + "/ROLL CAY CANH"
+                    );
+
+                    values.put(
+                            MediaStore.Downloads.IS_PENDING,
+                            1
+                    );
+
+                    Uri uri =
+                            getContentResolver().insert(
+                                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                    values
+                            );
+
+                    if (uri == null) {
+                        throw new Exception(
+                                "Không tạo được file trong Tải xuống"
+                        );
+                    }
+
+                    try (OutputStream out =
+                                 getContentResolver()
+                                         .openOutputStream(uri)) {
+
+                        if (out == null) {
+                            throw new Exception(
+                                    "Không mở được file đích"
+                            );
+                        }
+
                         out.write(bytes);
                         out.flush();
                     }
-                    ContentValues done = new ContentValues();
-                    done.put(MediaStore.Downloads.IS_PENDING, 0);
-                    getContentResolver().update(uri, done, null, null);
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                            "✅ Đã xuất file: Tải xuống / ROLL CAY CANH / " + outputName,
-                            Toast.LENGTH_LONG).show());
+
+                    ContentValues done =
+                            new ContentValues();
+
+                    done.put(
+                            MediaStore.Downloads.IS_PENDING,
+                            0
+                    );
+
+                    getContentResolver().update(
+                            uri,
+                            done,
+                            null,
+                            null
+                    );
+
+                    runOnUiThread(() ->
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    "✅ Đã xuất file: Tải xuống / ROLL CAY CANH / "
+                                            + outputName,
+                                    Toast.LENGTH_LONG
+                            ).show()
+                    );
+
                     return true;
                 }
 
-                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                if (!dir.exists() && !dir.mkdirs()) throw new Exception("Không tạo được thư mục Tải xuống");
-                File file = new File(dir, outputName);
-                try (FileOutputStream out = new FileOutputStream(file)) {
+                File dir =
+                        Environment.getExternalStoragePublicDirectory(
+                                Environment.DIRECTORY_DOWNLOADS
+                        );
+
+                if (!dir.exists() && !dir.mkdirs()) {
+                    throw new Exception(
+                            "Không tạo được thư mục Tải xuống"
+                    );
+                }
+
+                File file =
+                        new File(dir, outputName);
+
+                try (FileOutputStream out =
+                             new FileOutputStream(file)) {
+
                     out.write(bytes);
                     out.flush();
                 }
-                runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                        "✅ Đã lưu file trong thư mục Tải xuống / " + outputName,
-                        Toast.LENGTH_LONG).show());
+
+                runOnUiThread(() ->
+                        Toast.makeText(
+                                MainActivity.this,
+                                "✅ Đã lưu file trong thư mục Tải xuống / "
+                                        + outputName,
+                                Toast.LENGTH_LONG
+                        ).show()
+                );
+
                 return true;
+
             } catch (Exception e) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                        "❌ Không lưu được file: " + safeError(e), Toast.LENGTH_LONG).show());
+
+                runOnUiThread(() ->
+                        Toast.makeText(
+                                MainActivity.this,
+                                "❌ Không lưu được file: "
+                                        + safeError(e),
+                                Toast.LENGTH_LONG
+                        ).show()
+                );
+
                 return false;
             }
         }
     }
 
-    @Override public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
+    @Override
+    public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
     }
 
-    @Override protected void onDestroy() {
-        try { cleanupPrintWebView(activePrintWebView); } catch (Exception ignored) {}
-        try { mainHandler.removeCallbacksAndMessages(null); } catch (Exception ignored) {}
-        try { if (webView != null) webView.destroy(); } catch (Exception ignored) {}
+    @Override
+    protected void onDestroy() {
+        try {
+            cleanupPrintWebView(activePrintWebView);
+        } catch (Exception ignored) {}
+
+        try {
+            mainHandler.removeCallbacksAndMessages(null);
+        } catch (Exception ignored) {}
+
+        try {
+            if (webView != null) {
+                webView.destroy();
+            }
+        } catch (Exception ignored) {}
+
         super.onDestroy();
     }
 }
