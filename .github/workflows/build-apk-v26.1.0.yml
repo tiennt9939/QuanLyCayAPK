@@ -16,6 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -65,14 +66,28 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess, tempfile
-          source = Path('app/src/main/assets/index.html').read_text(encoding='utf-8')
-          blocks = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', source, re.S | re.I)
+
+          source = Path('app/src/main/assets/index.html').read_text(
+              encoding='utf-8'
+          )
+          blocks = re.findall(
+              r'<script(?:\s[^>]*)?>(.*?)</script>',
+              source,
+              re.S | re.I
+          )
+
           with tempfile.TemporaryDirectory() as td:
               for i, block in enumerate(blocks):
                   path = Path(td) / f'script_{i}.js'
                   path.write_text(block, encoding='utf-8')
-                  subprocess.run(['node', '--check', str(path)], check=True)
-          print(f'JavaScript syntax passed for {len(blocks)} script blocks')
+                  subprocess.run(
+                      ['node', '--check', str(path)],
+                      check=True
+                  )
+
+          print(
+              f'JavaScript syntax passed for {len(blocks)} script blocks'
+          )
           PY
 
       - name: Build debug APK
@@ -82,6 +97,15 @@ jobs:
           gradle clean assembleDebug --no-daemon --stacktrace --warning-mode all
           test -s app/build/outputs/apk/debug/app-debug.apk
           ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Print APK signing certificate SHA-1
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -s "$APK"
+          "$APKSIGNER" verify --print-certs "$APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
