@@ -1,4 +1,4 @@
-name: Build ROLL CAY CANH V26.1.1
+name: Build ROLL CAY CANH V26.1.2 — Completion/Catalog/Wage Fix
 
 on:
   workflow_dispatch:
@@ -9,18 +9,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: roll-cay-canh-v26-1-build-${{ github.ref }}
+  group: roll-cay-canh-v26-1-2-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare Android source
+      - name: Prepare V26.1.2 Android source from ZIP when needed
         shell: bash
         run: |
           set -euo pipefail
@@ -33,71 +33,48 @@ jobs:
                -f "$d/app/src/main/assets/index.html" &&
                -f "$d/tools/preflight.py" ]]
           }
-
           if required_root "."; then
-            echo "Complete Android source already exists at repository root."
+            echo "Complete source exists at repository root."
             exit 0
           fi
-
-          archive="QuanLyCayAPK-V26.1.0-COMBINED-QUOTA-SYNC-FIX-V3.zip"
+          archive="QuanLyCayAPK-V26.1.2-COMPLETION-CATALOG-WAGE-FIX.zip"
           if [[ ! -s "$archive" ]]; then
-            echo "::error::Android source files are incomplete and expected ZIP is missing: $archive"
-            echo "Root listing:"
-            find . -maxdepth 3 -type f | sort | head -200
+            echo "::error::Missing $archive. Upload the V26.1.2 source ZIP to repository root first."
             exit 1
           fi
-
-          extract="$RUNNER_TEMP/quanlycay-source"
+          extract="$RUNNER_TEMP/quanlycay-v26-1-2"
           mkdir -p "$extract"
           unzip -q "$archive" -d "$extract"
-
           source_root=""
           while IFS= read -r settings; do
             candidate="$(dirname "$settings")"
-            if required_root "$candidate"; then
-              source_root="$candidate"
-              break
-            fi
+            if required_root "$candidate"; then source_root="$candidate"; break; fi
           done < <(find "$extract" -type f -name settings.gradle.kts -print)
-
           if [[ -z "$source_root" ]]; then
-            echo "::error::Could not find a complete Android project inside $archive."
-            echo "Files found in archive (first 250):"
-            find "$extract" -maxdepth 7 -type f | sort | head -250
+            echo "::error::No complete Android project found inside $archive."
+            find "$extract" -maxdepth 5 -type f | sort | head -200
             exit 1
           fi
-
-          echo "Using Android project root: $source_root"
           cp -a "$source_root"/. .
+          echo "Loaded source from $archive"
 
-      - name: Verify Android source
+      - name: Verify V26.1.2 source and Firestore Rules
         shell: bash
         run: |
           set -euo pipefail
-          required=(
-            settings.gradle.kts
-            build.gradle.kts
-            app/build.gradle.kts
-            app/src/main/AndroidManifest.xml
-            app/src/main/assets/index.html
-            tools/preflight.py
-          )
-          missing=0
-          for f in "${required[@]}"; do
-            if [[ -s "$f" ]]; then
-              echo "PASS: $f"
-            else
-              echo "::error::Missing or empty required file: $f"
-              missing=1
-            fi
-          done
-          if [[ "$missing" -ne 0 ]]; then
-            echo "Repository root contents:"
-            find . -maxdepth 4 -type f | sort | head -250
-            exit 1
-          fi
-          echo "Android source structure: PASS"
-          grep -n 'versionName\|versionCode' app/build.gradle.kts || true
+          test -s settings.gradle.kts
+          test -s build.gradle.kts
+          test -s app/build.gradle.kts
+          test -s app/src/main/AndroidManifest.xml
+          test -s app/src/main/assets/index.html
+          test -s tools/preflight.py
+          test -s firestore.rules
+          grep -q 'versionName = "26.1.2"' app/build.gradle.kts
+          grep -q 'versionCode = 44' app/build.gradle.kts
+          grep -q "t.matches('^VNGH\[0-9\]{8,12}\$')" firestore.rules
+          grep -q "get(/databases/\$(database)/documents/packingOrders/\$(request.resource.data.orderId)).data.orderType == 'TT'" firestore.rules
+          grep -q 'request.resource.data.diff(resource.data).affectedKeys().hasOnly' firestore.rules
+          echo "Source/Rules checks passed — V26.1.2 / code 44"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -117,17 +94,18 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
 
-      - name: Run source preflight
+      - name: Run preflight, wage/retention tests, and JavaScript syntax checks
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/preflight.py
-          node --version
+          node tools/retention_logic_test.js
+          node tools/packing_wage_rules_test.js
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess, tempfile
@@ -153,7 +131,7 @@ jobs:
             keytool -list -keystore app/debug.keystore -storepass android -alias androiddebugkey >/dev/null
             echo "Stable debug keystore loaded from Actions secret."
           else
-            echo "::warning::DEBUG_KEYSTORE_BASE64 is not set; this build will use a temporary debug certificate and Google Sign-In may fail with error 10."
+            echo "::warning::DEBUG_KEYSTORE_BASE64 is not set; this build uses a temporary debug certificate and Google Sign-In may require reconfiguration."
           fi
 
       - name: Build debug APK
@@ -161,15 +139,16 @@ jobs:
         run: |
           set -euo pipefail
           gradle clean assembleDebug --no-daemon --stacktrace --warning-mode all
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
-          echo "APK signing certificate fingerprints:"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          ls -lh "$apk"
+          sha256sum "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
 
-      - name: Upload APK artifact
+      - name: Upload V26.1.2 APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuanLyCayAPK-V26.1.1-debug
+          name: QuanLyCayAPK-V26.1.2-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -178,7 +157,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: QuanLyCayAPK-V26.1.1-build-diagnostics
+          name: QuanLyCayAPK-V26.1.2-build-diagnostics
           path: |
             app/build/outputs/**/*.log
             app/build/reports/**
