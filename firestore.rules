@@ -1,0 +1,339 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrapAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == 'tiennt9939@gmail.com';
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || (signedIn()
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && myProfile().data.role == 'admin'
+          && myProfile().data.active != false);
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && (isBootstrapAdmin()
+          || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && myProfile().data.active != false));
+    }
+
+    function role() {
+      return isBootstrapAdmin() ? 'admin' : myProfile().data.role;
+    }
+
+    function isProcurement() {
+      return isActiveUser()
+        && role() in ['procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua'];
+    }
+
+    function isPackerUid(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && get(/databases/$(database)/documents/users/$(uid)).data.role == 'packer'
+        && get(/databases/$(database)/documents/users/$(uid)).data.active != false;
+    }
+
+    function validShipmentTracking(t) {
+      // Keep this in sync with inferShipmentCarrierFromTracking() in index.html.
+      // GHN supports both GHVN alphanumeric labels and VNGH numeric labels.
+      return t is string
+        && (t.matches('^GHVN[A-Z0-9]{4,26}$')
+          || t.matches('^VNGH[0-9]{8,12}$')
+          || t.matches('^862[0-9]{9}$')
+          || t.matches('^530[0-9]{9}$'));
+    }
+
+    match /users/{uid} {
+      allow create: if isAdmin()
+        && request.resource.data.role in ['admin','manager','packer','warehouse','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua','viewer']
+        && (request.resource.data.role != 'admin'
+          || (!('employeeId' in request.resource.data) && !('employeeName' in request.resource.data)))
+        && (!(request.resource.data.role in ['packer','procurement','purchaser','purchasing','purchasing_staff','procurement_staff','thu_mua','nhan_vien_thu_mua'])
+          || (request.resource.data.employeeId is string && request.resource.data.employeeName is string))
+        || (signedIn() && request.auth.uid == uid && request.resource.data.role == 'viewer');
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /users/{uid}/apps/{appId} {
+      allow read, write: if isAdmin() && request.auth.uid == uid;
+    }
+
+    match /apps/{appId} {
+      allow read: if isActiveUser();
+      allow create, update: if isActiveUser() && (role() in ['admin','manager','warehouse'] || isProcurement());
+      allow delete: if isAdmin();
+    }
+
+    match /config/{configId} {
+      allow read: if isActiveUser();
+      allow create, update: if isAdmin() || isProcurement();
+      allow delete: if isAdmin() || isProcurement();
+      match /plants/{plantId} {
+        allow read: if isActiveUser();
+        allow create, update: if isAdmin() || isProcurement();
+        allow delete: if isAdmin() || isProcurement();
+      }
+    }
+
+    match /packingOrders/{orderId} {
+      allow read: if isAdmin()
+        || (isActiveUser() && role() == 'packer' && resource.data.assignedUid == request.auth.uid)
+        || (isActiveUser() && role() == 'packer'
+          && resource.data.orderType == 'ĐD'
+          && resource.data.status == 'completed');
+
+      allow create: if isAdmin()
+        && request.resource.data.assignedUid is string
+        && isPackerUid(request.resource.data.assignedUid)
+        && request.resource.data.employee is string
+        && request.resource.data.plantName is string
+        && request.resource.data.size is string
+        && request.resource.data.packSize is number
+        && request.resource.data.packSize >= 1
+        && request.resource.data.packSize <= 100
+        && request.resource.data.status == 'pending';
+
+      allow update: if isAdmin()
+        || (
+          isActiveUser()
+          && role() == 'packer'
+          && resource.data.assignedUid == request.auth.uid
+          && resource.data.status == 'pending'
+          // Only completion/evidence/payment snapshot fields may change. All assignment,
+          // plant, size, quantity, and order identity fields remain immutable. diff() also
+          // supports older valid orders which predate optional plantIndex/packSize fields.
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status','completionImage','completionImages','completedAtMs','completedDate','completedAt',
+            'completedBy','completionRecordedBy','shipment','shipmentTrackingNo','shipmentCarrier','shipmentCustomerName',
+            'shipmentOcrText','shipmentOcrPending','shipmentOcrStatus'
+          ])
+          && request.resource.data.status == 'completed'
+          && request.resource.data.completionImage is string
+          && request.resource.data.completionImage.size() > 0
+          && request.resource.data.completionImages is list
+          && (
+            (request.resource.data.orderType == 'ĐD'
+              && request.resource.data.completionImages.size() == 1
+              && request.resource.data.completionImages[0] is string
+              && request.resource.data.completionImages[0].size() > 0
+              && request.resource.data.completedBy == request.auth.uid
+              && request.resource.data.shipmentOcrPending == true)
+            ||
+            (request.resource.data.orderType == 'ĐN'
+              && request.resource.data.completionImages.size() == 2
+              && request.resource.data.completionImages[0] is string
+              && request.resource.data.completionImages[1] is string
+              && request.resource.data.completionImages[0].size() > 0
+              && request.resource.data.completionImages[1].size() > 0
+              && request.resource.data.completedBy == request.auth.uid
+              && request.resource.data.shipmentOcrPending == false)
+            ||
+            (request.resource.data.orderType == 'TT'
+              && request.resource.data.completionImages.size() == 2
+              && request.resource.data.completionImages[0] is string
+              && request.resource.data.completionImages[1] is string
+              && request.resource.data.completionImages[0].size() > 0
+              && request.resource.data.completionImages[1].size() > 0
+              && request.resource.data.completedBy == request.auth.uid
+              && request.resource.data.shipmentTrackingNo is string
+              && validShipmentTracking(request.resource.data.shipmentTrackingNo)
+              && request.resource.data.shipmentCarrier is string
+              && request.resource.data.shipmentCarrier != ''
+              && request.resource.data.shipmentOcrText is string
+              && request.resource.data.shipmentOcrText.size() > 0
+              && request.resource.data.shipmentOcrPending == false
+              && getAfter(/databases/$(database)/documents/shipmentTrackingClaims/$(request.resource.data.shipmentTrackingNo)).data.orderId == orderId)
+          )
+        )
+        || (
+          isActiveUser()
+          && role() == 'packer'
+          && resource.data.orderType == 'ĐD'
+          && resource.data.status == 'completed'
+          && resource.data.shipmentOcrPending == true
+          // The second-stage OCR action may add evidence/shipment fields only.
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'completionImage','completionImages','completedBy','shipment','shipmentTrackingNo',
+            'shipmentCarrier','shipmentCustomerName','shipmentOcrText','shipmentOcrPending',
+            'shipmentOcrStatus','shipmentOcrCompletedAtMs','shipmentOcrCompletedBy'
+          ])
+          && request.resource.data.completedBy == resource.data.completedBy
+          && request.resource.data.completionImages is list
+          && request.resource.data.completionImages.size() == 2
+          && request.resource.data.completionImages[0] is string
+          && request.resource.data.completionImages[1] is string
+          && request.resource.data.completionImages[0].size() > 0
+          && request.resource.data.completionImages[1].size() > 0
+          && request.resource.data.shipmentTrackingNo is string
+          && validShipmentTracking(request.resource.data.shipmentTrackingNo)
+          && request.resource.data.shipmentCarrier is string
+          && request.resource.data.shipmentCarrier != ''
+          && request.resource.data.shipmentOcrText is string
+          && request.resource.data.shipmentOcrText.size() > 0
+          && request.resource.data.shipmentOcrPending == false
+          && getAfter(/databases/$(database)/documents/shipmentTrackingClaims/$(request.resource.data.shipmentTrackingNo)).data.orderId == orderId
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /shipmentTrackingClaims/{trackingNo} {
+      allow read: if isActiveUser();
+
+      allow create: if isActiveUser()
+        && validShipmentTracking(request.resource.data.trackingNo)
+        && request.resource.data.trackingNo == trackingNo
+        && request.resource.data.orderId is string
+        && request.resource.data.orderId.size() > 0
+        && request.resource.data.carrier is string
+        && request.resource.data.employee is string
+        && (
+          isAdmin()
+          || (
+            role() == 'packer'
+            && exists(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId))
+            && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.orderType == 'ĐD'
+            && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.status == 'completed'
+            && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.shipmentOcrPending == true
+          )
+          || (
+            // TikTok/TT packer claims a tracking number only while completing their own pending order.
+            isActiveUser()
+            && role() == 'packer'
+            && request.resource.data.completedBy == request.auth.uid
+            && request.resource.data.orderId is string
+            && exists(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId))
+            && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.assignedUid == request.auth.uid
+            && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.status == 'pending'
+            && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.orderType == 'TT'
+          )
+        );
+
+      allow update: if isAdmin()
+        || (
+          isActiveUser()
+          && role() == 'packer'
+          && resource.data.orderId == request.resource.data.orderId
+          && validShipmentTracking(request.resource.data.trackingNo)
+          && request.resource.data.trackingNo == trackingNo
+          && exists(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId))
+          && get(/databases/$(database)/documents/packingOrders/$(request.resource.data.orderId)).data.orderType == 'ĐD'
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /inventory/{docId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /inventoryLogs/{docId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /payroll/{docId} {
+      allow read: if isAdmin() || (isActiveUser() && role() == 'packer' && resource.data.employeeUid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /salaryAdvances/{docId} {
+      allow read: if isAdmin() || (isActiveUser() && role() == 'packer' && resource.data.employeeUid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /reports/{docId} {
+      allow read: if isAdmin() || (isActiveUser() && role() == 'packer' && resource.data.employeeUid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /quotes/{docId} {
+      allow read, write: if isAdmin() || isProcurement();
+    }
+
+    match /quotation/{docId} {
+      allow read, write: if isAdmin() || isProcurement();
+    }
+
+    match /shipmentOcr/{docId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /auditLogs/{docId} {
+      allow read: if isAdmin();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    match /syncState/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /appState/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /payrollSettings/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /salarySettings/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /priceSettings/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /categories/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin() || isProcurement();
+    }
+
+    match /plantCategories/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin() || isProcurement();
+    }
+
+    match /sizes/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin() || isProcurement();
+    }
+
+    match /employees/{docId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
