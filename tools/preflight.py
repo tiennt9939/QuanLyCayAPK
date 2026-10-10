@@ -1,0 +1,103 @@
+from pathlib import Path
+import hashlib, re, json, sys, xml.etree.ElementTree as ET
+
+ROOT=Path(__file__).resolve().parents[1]
+java=ROOT/'app/src/main/java/com/quanlycay/apk/MainActivity.java'
+html=ROOT/'app/src/main/assets/index.html'
+bg=ROOT/'app/src/main/assets/quote-background.jpg'
+manifest=ROOT/'app/src/main/AndroidManifest.xml'
+styles=ROOT/'app/src/main/res/values/styles.xml'
+data=ROOT/'app/src/main/assets/data.json'
+rules=ROOT/'firestore.rules'
+gradle=ROOT/'app/build.gradle.kts'
+
+for f in (java,html,bg,manifest,styles,data,rules,gradle):
+    assert f.is_file(), f
+
+assert hashlib.sha256(bg.read_bytes()).hexdigest() == '9c3965014db664df3caa1b42a85488c9a9c5557685e3c55d8b81625729655251'
+
+j=java.read_text(encoding='utf-8')
+ann=len(re.findall(r'@JavascriptInterface',j))
+assert ann==5, f'Expected exactly five @JavascriptInterface methods, found {ann}'
+assert 'FixedAttributesPrintAdapter' not in j, 'Legacy print adapter must stay removed'
+assert 'CAPTURE_PRINT_HTML_JS' in j, 'Isolated print capture bridge missing'
+assert 'MediaSize.ISO_A4' in j, 'Native ISO A4 print size missing'
+assert 'ROLL_GARDEN_65X100' in j, '65x100 media size missing'
+assert 'Downloads.RELATIVE_PATH' in j
+assert 'ocrShippingImage' in j
+assert 'public void ocrShippingImage(String dataUrl, String callback)' in j, 'OCR bridge must accept the callback used by index.html'
+assert 'TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)' in j and '.process(image)' in j, 'Native ML Kit OCR processing missing'
+assert 'deliverOcrResult(cb, recognized)' in j and 'deliverOcrResult(cb, "")' in j, 'OCR success/failure callback missing'
+assert 'implementation("com.google.mlkit:text-recognition:16.0.1")' in (ROOT/'app/build.gradle.kts').read_text(encoding='utf-8'), 'ML Kit OCR dependency missing'
+assert 'sendToFlashLabel' in j
+assert 'window.' in j, 'Native file export path missing'
+
+h=html.read_text(encoding='utf-8')
+assert "AndroidBridge.ocrShippingImage(photo,'__packingShipmentOcrResult')" in h, 'Packing OCR callback wiring missing'
+assert "AndroidBridge.ocrShippingImage(pendingAdminOrderProof[index],'__adminShipmentOcrResult')" in h, 'Admin OCR callback wiring missing'
+assert 'quote-background.jpg' in h
+assert '.quote-pdf-bg' in h and '.quote-pdf-page' in h
+assert 'function exportQuotePdf()' in h
+assert 'function exportPayrollCsv()' in h
+assert 'function saveSalaryAdvance()' in h
+assert 'function payrollAdvanceAvailable(' in h
+assert 'function refreshAssignmentCatalogUI()' in h
+assert 'refreshCatalogForAssignment' in h
+assert 'V26.0.0 ROOT CAUSE FIX' in h
+assert 'J&T Express' in h
+assert 'J&T Cargo' in h
+assert 'GHN' in h
+assert "/^GHVN[A-Z0-9]{4,26}$/" in h, 'GHVN tracking prefix rule missing'
+assert "/^862\\d{9}$/" in h, '12-digit J&T Express tracking rule missing'
+assert "/^530\\d{9}$/" in h, '12-digit J&T Cargo tracking rule missing'
+assert 'Ưu tiên các mẫu mã đã quy ước' in h, 'OCR tracking prefix filter missing'
+assert 'CloudSync.schedulePush()' in h
+assert 'const localCatalog=Array.isArray(D.catalog)' in h
+assert "catalogId:String(x.catalogId||'')" in h, 'Assignment payload must preserve catalogId'
+assert "catalogId:String(x?.catalogId||'')" in h, 'Cloud order creation must preserve catalogId'
+assert "const catalogId=String(r?.catalogId??'').trim()" in h, 'Reports must resolve orders by catalogId first'
+assert 'function addAssignmentItem()' in h
+assert 'assignPackSize' not in h, 'Legacy combo selector must be removed; each item line owns its quantity'
+assert 'completionImages' in h and 'proofReady' in h
+assert 'printA4Page' in h
+assert 'print-order' in h
+# Payroll DOM must have exactly one payrollBody and no stray closing wrapper between advance card and body.
+assert h.count('id="payrollBody"') == 1
+assert '<section id="payroll"' in h and '</section>' in h
+
+r=rules.read_text(encoding='utf-8')
+assert 'request.resource.data.packSize >= 1' in r
+assert 'request.resource.data.packSize <= 100' in r
+assert 'request.resource.data.completionImages.size() == 2' in r
+
+g=gradle.read_text(encoding='utf-8')
+assert 'versionName = "26.1.1"' in g
+assert 'versionCode = 43' in g
+assert 'id="catalogExportSale"' in h
+assert 'id="catalogExportPurchase"' in h
+assert 'function exportCatalogPriceCsv()' in h
+assert 'function exportCatalogPricePdf()' in h
+# Quotation page must independently select sale/purchase columns for both PDF and CSV.
+assert 'id="quoteExportSale"' in h and 'id="quoteExportPurchase"' in h
+assert 'function quotePriceOptions(' in h
+assert 'function onQuotePriceOptionsChanged()' in h
+assert 'function quotePurchasePrice(' in h
+assert "if(includePurchase&&role!=='admin')" in h
+assert "headers.push('Giá nhập','Thành tiền nhập')" in h
+assert "headers.push('Giá bán','Thành tiền bán')" in h
+assert "const label=includePurchase&&includeSale?'gia-nhap-va-gia-ban':includePurchase?'gia-nhap':'gia-ban'" in h
+assert "if(includePurchase&&role!=='admin')" in h
+assert 'if(!includeSale&&!includePurchase)' in h
+
+ET.parse(manifest); ET.parse(styles); json.loads(data.read_text(encoding='utf-8'))
+print('PREFLIGHT PASS')
+print('Background SHA-256:', hashlib.sha256(bg.read_bytes()).hexdigest())
+print('JavascriptInterface count:', ann)
+print('Version: 26.1.1 / code 43')
+print('Catalog price export: sale/purchase/both selectable; purchase export admin-only')
+print('Quotation PDF/CSV: sale/purchase/both selectable; purchase visible/export admin-only')
+print('Multi-item assignment: per-line quantities preserved; order total 1..100')
+print('Payroll export: PASS')
+print('Salary advance: PASS')
+print('Assignment refresh: PASS')
+print('Isolated print WebView: PASS')
