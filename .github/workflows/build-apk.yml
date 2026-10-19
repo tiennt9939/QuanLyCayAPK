@@ -1,0 +1,186 @@
+name: Build ROLL CAY CANH V26.2.77 — Preserve Recognition Rules + Outside Orders
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '*AUTO-UPDATE-SOURCE.zip'
+      - '**/*AUTO-UPDATE-SOURCE.zip'
+  workflow_dispatch:
+    inputs:
+      source_zip:
+        description: 'Tên ZIP source có bộ tự cập nhật; để trống để chọn phiên bản cao nhất.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: roll-cay-canh-auto-update-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select and unpack newest auto-update source
+        id: source_meta
+        env:
+          REQUESTED_SOURCE_ZIP: ${{ github.event.inputs.source_zip || '' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          is_target_source() {
+            local root="$1"
+            [[ -f "$root/settings.gradle.kts" && -f "$root/build.gradle.kts" && -f "$root/app/build.gradle.kts" && -f "$root/app/src/main/AndroidManifest.xml" && -f "$root/app/src/main/assets/index.html" && -f "$root/app/src/main/assets/tiktok-label-import.js" && -f "$root/app/src/main/java/com/quanlycay/apk/MainActivity.java" && -f "$root/tools/preflight.py" ]] && \
+              grep -Fq 'checkForAppUpdates' "$root/app/src/main/java/com/quanlycay/apk/MainActivity.java" && \
+              grep -Eq 'versionName = "[0-9]+(\.[0-9]+)+"' "$root/app/build.gradle.kts" && \
+              grep -Eq 'versionCode = [0-9]+' "$root/app/build.gradle.kts"
+          }
+          archive="${REQUESTED_SOURCE_ZIP:-}"
+          if [[ -n "$archive" ]]; then
+            [[ -s "$archive" ]] || { echo "::error::Không tìm thấy ZIP: $archive"; exit 1; }
+          else
+            while IFS= read -r candidate; do [[ -s "$candidate" ]] && archive="$candidate"; done < <(find . -type f -iname '*AUTO-UPDATE-SOURCE.zip' -not -path './.git/*' -print | sort -V)
+          fi
+          [[ -n "$archive" ]] || { echo '::error::Không tìm thấy *AUTO-UPDATE-SOURCE.zip trên repository.'; exit 1; }
+          extract="$RUNNER_TEMP/roll-cay-canh-source"
+          mkdir -p "$extract"
+          unzip -q "$archive" -d "$extract"
+          source_root=""
+          while IFS= read -r settings; do candidate="$(dirname "$settings")"; if is_target_source "$candidate"; then source_root="$candidate"; break; fi; done < <(find "$extract" -type f -name settings.gradle.kts -print)
+          [[ -n "$source_root" ]] || { echo '::error::ZIP không chứa source Android có updater hợp lệ.'; exit 1; }
+          archive_basename="$(basename "$archive")"
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name "$archive_basename" -exec rm -rf -- {} +
+          cp -a "$source_root"/. .
+          is_target_source . || { echo '::error::Source sau khi giải nén không hợp lệ.'; exit 1; }
+          version_name="$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)"
+          version_code="$(sed -nE 's/.*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)"
+          [[ "$version_name" =~ ^[0-9]+(\.[0-9]+)+$ && "$version_code" =~ ^[0-9]+$ ]] || { echo '::error::versionName/versionCode không hợp lệ.'; exit 1; }
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "Selected source V$version_name / code $version_code from $archive_basename"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Run preflight, all regression tests, and JavaScript syntax checks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 tools/preflight.py
+          for test in tools/*_test.js; do echo "Running $test"; node "$test"; done
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess, tempfile
+          source = Path('app/src/main/assets/index.html').read_text(encoding='utf-8')
+          blocks = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', source, re.S | re.I)
+          with tempfile.TemporaryDirectory() as td:
+              for i, block in enumerate(blocks):
+                  path = Path(td) / f'script_{i}.js'
+                  path.write_text(block, encoding='utf-8')
+                  subprocess.run(['node', '--check', str(path)], check=True)
+          subprocess.run(['node', '--check', 'app/src/main/assets/tiktok-label-import.js'], check=True)
+          print(f'JavaScript syntax passed for {len(blocks)} inline script blocks and the PDF parser')
+          PY
+
+      - name: Configure stable APK signing
+        id: signing
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          EXPECTED_APK_CERT_SHA256: ${{ secrets.EXPECTED_APK_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${DEBUG_KEYSTORE_BASE64:-}" ]] || { echo '::error::Thiếu secret DEBUG_KEYSTORE_BASE64; không dùng khóa ký tạm.'; exit 1; }
+          mkdir -p app
+          printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > app/debug.keystore
+          keytool -list -keystore app/debug.keystore -storepass android -alias androiddebugkey >/dev/null
+          expected="$(printf '%s' "${EXPECTED_APK_CERT_SHA256:-}" | tr -d ' :\r\n' | tr '[:upper:]' '[:lower:]')"
+          if [[ -n "$expected" && ! "$expected" =~ ^[a-f0-9]{64}$ ]]; then echo '::error::EXPECTED_APK_CERT_SHA256 không hợp lệ.'; exit 1; fi
+          if [[ -n "$expected" ]]; then echo 'release_enabled=true' >> "$GITHUB_OUTPUT"; else echo 'release_enabled=false' >> "$GITHUB_OUTPUT"; echo '::warning::Thiếu EXPECTED_APK_CERT_SHA256; chỉ tạo Artifact, không phát hành Release để tránh sai chữ ký.'; fi
+
+      - name: Build, verify signature, and create checksum
+        env:
+          VERSION_NAME: ${{ steps.source_meta.outputs.version_name }}
+          EXPECTED_APK_CERT_SHA256: ${{ secrets.EXPECTED_APK_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gradle clean assembleDebug --no-daemon --stacktrace --warning-mode all
+          apk='app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$apk"
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          "$apksigner" verify "$apk"
+          cert_output="$("$apksigner" verify --print-certs "$apk" 2>&1)"
+          actual_cert="$(printf '%s\n' "$cert_output" | grep -Ei 'certificate SHA-256 digest' | grep -Eo '[A-Fa-f0-9]{64}' | head -n1 | tr '[:upper:]' '[:lower:]' || true)"
+          [[ "$actual_cert" =~ ^[a-f0-9]{64}$ ]] || { echo '::error::Không đọc được SHA-256 chữ ký APK.'; exit 1; }
+          expected="$(printf '%s' "${EXPECTED_APK_CERT_SHA256:-}" | tr -d ' :\r\n' | tr '[:upper:]' '[:lower:]')"
+          [[ -z "$expected" || "$actual_cert" == "$expected" ]] || { echo '::error::Chữ ký APK không khớp app đang phát hành; đã chặn release.'; exit 1; }
+          release_dir="$(dirname "$apk")"
+          cp "$apk" "$release_dir/QuanLyCayAPK-V${VERSION_NAME}.apk"
+          (cd "$release_dir" && sha256sum "QuanLyCayAPK-V${VERSION_NAME}.apk" > "QuanLyCayAPK-V${VERSION_NAME}.apk.sha256")
+          sha256sum "$release_dir/QuanLyCayAPK-V${VERSION_NAME}.apk" "$release_dir/QuanLyCayAPK-V${VERSION_NAME}.apk.sha256"
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuanLyCayAPK-V${{ steps.source_meta.outputs.version_name }}-AUTO-UPDATE-debug
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/QuanLyCayAPK-V${{ steps.source_meta.outputs.version_name }}.apk
+            app/build/outputs/apk/debug/QuanLyCayAPK-V${{ steps.source_meta.outputs.version_name }}.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release for in-app updater
+        if: steps.signing.outputs.release_enabled == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.source_meta.outputs.version_name }}
+          name: ROLL CÂY CẢNH V${{ steps.source_meta.outputs.version_name }} — Tự cập nhật trong ứng dụng
+          target_commitish: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          body: |
+            ROLL CÂY CẢNH V${{ steps.source_meta.outputs.version_name }} (versionCode: ${{ steps.source_meta.outputs.version_code }})
+
+            - Chạy preflight, kiểm thử hồi quy và kiểm tra cú pháp JavaScript trước khi build.
+            - Giữ khả năng đọc quy tắc nhận diện V26.2.72 và chỉ bổ sung nhận diện tương thích.
+            - APK tự cập nhật qua GitHub Releases, xác minh SHA-256; Android vẫn yêu cầu người dùng xác nhận cài đặt.
+          files: |
+            app/build/outputs/apk/debug/QuanLyCayAPK-V${{ steps.source_meta.outputs.version_name }}.apk
+            app/build/outputs/apk/debug/QuanLyCayAPK-V${{ steps.source_meta.outputs.version_name }}.apk.sha256
+
+      - name: Explain when Release is skipped
+        if: steps.signing.outputs.release_enabled != 'true'
+        run: echo '::notice::APK Artifact đã tạo; GitHub Release bị bỏ qua vì EXPECTED_APK_CERT_SHA256 chưa được cấu hình.'
